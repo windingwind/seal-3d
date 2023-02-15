@@ -899,6 +899,11 @@ class Trainer(object):
             for data in loader:    
                 self.local_step += 1
 
+                # TODO: remove this
+                # for faster test, only evaluate first 50 images
+                if self.local_step > 50:
+                    break
+
                 with torch.cuda.amp.autocast(enabled=self.fp16):
                     preds, preds_depth, truths, loss = self.eval_step(data)
 
@@ -930,6 +935,7 @@ class Trainer(object):
 
                     # save image
                     save_path = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_rgb.png')
+                    save_path_truth = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_gt.png')
                     save_path_depth = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_depth.png')
 
                     #self.log(f"==> Saving validation image to {save_path}")
@@ -943,8 +949,12 @@ class Trainer(object):
 
                     pred_depth = preds_depth[0].detach().cpu().numpy()
                     pred_depth = (pred_depth * 255).astype(np.uint8)
+
+                    truth = truths[0].detach().cpu().numpy()
+                    truth = (truth * 255).astype(np.uint8)
                     
                     cv2.imwrite(save_path, cv2.cvtColor(pred, cv2.COLOR_RGB2BGR))
+                    cv2.imwrite(save_path_truth, cv2.cvtColor(truth, cv2.COLOR_RGB2BGR))
                     cv2.imwrite(save_path_depth, pred_depth)
 
                     pbar.set_description(f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f})")

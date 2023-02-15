@@ -16,3 +16,6 @@ packaging
 scipy
 lpips
 imageio
+clip
+imageio_ffmpeg
+scikit-spatial

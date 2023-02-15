@@ -17,8 +17,11 @@ dependencies:
   - rich
   - packaging
   - scipy
+  - scikit-spatial
   - pip:
     - imageio
+    - clip
+    - imageio_ffmpeg
     - lpips
     - torch-ema
     - PyMCubes

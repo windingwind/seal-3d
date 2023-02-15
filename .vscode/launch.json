@@ -1,0 +1,209 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: 当前文件",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: nerf-lego",
+            "type": "python",
+            "request": "launch",
+            "program": "main_nerf.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "data/nerf_synthetic/lego/",
+                "--workspace",
+                "exps/trial_nerf",
+                "-O"
+            ]
+        },
+        {
+            "name": "Python: nerf-chair",
+            "type": "python",
+            "request": "launch",
+            "program": "main_nerf.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "data/nerf_synthetic/chair/",
+                "--workspace",
+                "exps/nerf_chair_original",
+                "-O"
+            ]
+        },
+        {
+            "name": "Python: sealnerf-lego-bbox",
+            "type": "python",
+            "request": "launch",
+            "program": "main_SealNeRF.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "data/nerf_synthetic/lego/",
+                "--workspace",
+                "exps/seal_lego_bbox_real_pose",
+                "-O",
+                "--iters",
+                "35000",
+                // "--num_rays",
+                // "9216",
+                // "--custom_pose",
+                "--ckpt",
+                "exps/nerf_lego/checkpoints/ngp_ep0300.pth",
+                "--teacher_workspace",
+                "exps/seal_lego_teacher",
+                "--seal_config",
+                "data/seal/lego_bbox/"
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "1",
+            }
+        },
+        {
+            "name": "Python: sealnerf-lego-brush",
+            "type": "python",
+            "request": "launch",
+            "program": "main_SealNeRF.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "data/nerf_synthetic/lego/",
+                "--workspace",
+                "exps/seal_lego_bbox_128",
+                "-O",
+                "--iters",
+                "40000",
+                // "--num_rays",
+                // "12288",
+                "--ckpt",
+                "exps/nerf_lego/checkpoints/ngp_ep0300.pth",
+                "--teacher_workspace",
+                "exps/teacher_nerf",
+                "--seal_config",
+                "data/seal/lego_brush_inside/"
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "3",
+            }
+        },
+        {
+            "name": "Python: sealnerf-lego-anchor",
+            "type": "python",
+            "request": "launch",
+            "program": "main_SealNeRF.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "data/nerf_synthetic/chair/",
+                "--workspace",
+                "exps/seal_lego_anchor",
+                "-O",
+                "--iters",
+                "37000",
+                // "--num_rays",
+                // "12288",
+                // "--custom_pose",
+                "--ckpt",
+                "exps/seal_lego_anchor/checkpoints/ngp_ep0350.pth",
+                "--teacher_workspace",
+                "exps/seal_lego_teacher",
+                "--seal_config",
+                "data/seal/lego_anchor/"
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "1",
+            }
+        },
+        {
+            "name": "Python: sealnerf-chair-brush",
+            "type": "python",
+            "request": "launch",
+            "program": "main_SealNeRF.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "data/nerf_synthetic/chair/",
+                "--workspace",
+                "exps/seal_chair_brush_positive",
+                "-O",
+                "--iters",
+                "70000",
+                // "--num_rays",
+                // "12288",
+                "--ckpt",
+                "exps/seal_chair_brush_positive/checkpoints/ngp_ep0601.pth",
+                "--teacher_workspace",
+                "exps/seal_chair_teacher",
+                "--seal_config",
+                "data/seal/chair_brush_positive/"
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "1",
+            }
+        },
+        {
+            "name": "Python: sealnerf-chair-brush-inside",
+            "type": "python",
+            "request": "launch",
+            "program": "main_SealNeRF.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "data/nerf_synthetic/chair/",
+                "--workspace",
+                "exps/seal_nerf_chair_inside",
+                "-O",
+                "--iters",
+                "50000",
+                // "--num_rays",
+                // "12288",
+                "--ckpt",
+                "exps/seal_nerf_chair_inside/checkpoints/ngp_ep0400.pth",
+                "--teacher_workspace",
+                "exps/teacher_nerf_chair",
+                "--seal_config",
+                "data/seal/chair_brush_inside/"
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "0",
+            }
+        },
+        {
+            "name": "Python: sealnerf-chair-anchor",
+            "type": "python",
+            "request": "launch",
+            "program": "main_SealNeRF.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "data/nerf_synthetic/chair/",
+                "--workspace",
+                "exps/seal_chair_anchor_random_pose",
+                "-O",
+                "--iters",
+                "35000",
+                // "--num_rays",
+                // "12288",
+                "--custom_pose",
+                "--ckpt",
+                "exps/seal_chair_teacher/checkpoints/ngp_ep0300.pth",
+                "--teacher_workspace",
+                "exps/seal_chair_teacher",
+                "--seal_config",
+                "data/seal/chair_anchor/"
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "1",
+            }
+        }
+    ]
+}

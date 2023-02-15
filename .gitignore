@@ -4,6 +4,7 @@ build/
 *.so
 
 tmp*
+exps*
 data/
 trial*/
 .vs/
