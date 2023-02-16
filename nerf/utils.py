@@ -336,6 +336,8 @@ class Trainer(object):
             import lpips
             self.criterion_lpips = lpips.LPIPS(net='alex').to(self.device)
 
+        self.criterion_depth = torch.nn.L1Loss()
+
         if optimizer is None:
             self.optimizer = optim.Adam(self.model.parameters(), lr=0.001, weight_decay=5e-4) # naive adam
         else:
@@ -475,6 +477,11 @@ class Trainer(object):
 
         # MSE loss
         loss = self.criterion(pred_rgb, gt_rgb).mean(-1) # [B, N, 3] --> [B, N]
+
+        if 'depth' in data and N % math.sqrt(N) == 0:
+            gt_depth = data['depth']
+            pred_depth = outputs['depth']
+            loss += self.criterion_depth(pred_depth, gt_depth)
 
         # patch-based rendering
         if self.opt.patch_size > 1:

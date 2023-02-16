@@ -40,9 +40,11 @@ class SealTrainer(OriginalTrainer):
                 rays_o, rays_d, staged=True, bg_color=None, perturb=False, force_all_rays=all_ray, **vars(self.opt))
 
         data['images'] = teacher_outputs['image']
+        data['depth'] = teacher_outputs['depth']
         # reshape if it is a full image
         if is_full:
             data['images'] = data['images'].view(*image_shape[:-1], -1)
+            data['depth'] = data['depth'].view(*image_shape[:-1], -1)
 
     def train_step(self, data):
         # if self.teacher_trainer.model.density_bitfield_hacked:
