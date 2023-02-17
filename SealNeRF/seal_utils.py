@@ -53,9 +53,13 @@ class SealMapper:
     def map_mask(self, points: torch.Tensor) -> torch.BoolTensor:
         return torch.logical_and(points.all(1), torch.logical_and(self.map_data['map_bound'][1] > points, points > self.map_data['map_bound'][0]).all(1))
 
-
 # seal tool, transform and resize space inside a bbox
 # TODO: use oriented bbox
+# seal_config format:
+# type: bbox
+# raw: [N,3] points
+# transform: [4,4]
+# scale: [3]
 class SealBBoxMapper(SealMapper):
     def __init__(self, config_path: str, seal_config: object) -> None:
         super().__init__()
@@ -67,7 +71,7 @@ class SealBBoxMapper(SealMapper):
 
         # bbox of original points
         self.from_mesh = get_trimesh_box(
-            np.array(seal_config['from_points']['raw']))
+            np.array(seal_config['raw']))
         from_center = self.from_mesh.centroid
 
         # bbox of the target points (points that are to be mapped)
@@ -137,15 +141,22 @@ class SealBBoxMapper(SealMapper):
 
 
 # brush tool, increase/decrease the surface height along normal direction
+# seal_config format:
+# type: brush
+# raw: [N,3] points
+# normal: [3] decide which side of the plane is the positive side
+# brushPressure: float maximun height, can be negative
+# attenuationDistance: float d(point - center) < attenuationDistance, keeps the highest pressure
+# attenuationMode: float d(point - center) > attenuationDistance, pressure attenuates. linear, ease-in, ease-out
 class SealBrushMapper(SealMapper):
     def __init__(self, config_path: str, seal_config: object) -> None:
         super().__init__()
 
-        points = seal_config['plane']['raw']
+        points = seal_config['raw']
         # compute plane
         plane = Plane.best_fit(points)
         # compute normal
-        if 'normal' in seal_config['plane'] and plane.normal @ np.array(seal_config['plane']['normal']) < 0:
+        if 'normal' in seal_config and plane.normal @ np.array(seal_config['normal']) < 0:
             plane.normal *= -1
 
         # generate force filled grids bound
@@ -211,14 +222,19 @@ class SealBrushMapper(SealMapper):
 
 
 # control point (anchor) tool
+# seal_config format:
+# type: anchor
+# raw: [N,3] points, determine the plane
+# translation: [3]
+# radius: float affected area radius
 class SealAnchorMapper(SealMapper):
     def __init__(self, config_path: str, seal_config: object) -> None:
         super().__init__()
-        v_translation = np.array(seal_config['anchor']['translation'])
+        v_translation = np.array(seal_config['translation'])
         len_translation = np.linalg.norm(v_translation, 2)
-        v_anchor = np.mean(seal_config['anchor']['raw'], 0)
+        v_anchor = np.mean(seal_config['raw'], 0)
 
-        plane = Plane.best_fit(seal_config['anchor']['raw'])
+        plane = Plane.best_fit(seal_config['raw'])
 
         v_translated_anchor = v_anchor + v_translation
         v_projected_translated_anchor = plane.project_point(
