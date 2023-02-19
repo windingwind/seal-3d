@@ -16,11 +16,12 @@ class SealMapper:
     def __init__(self) -> None:
         self.device = 'cpu'
         self.dtype = torch.float32
-        # must be initialized variables in `map_data`:
+        # variables in `map_data`:
         # force_fill_bound: for `hack_bitfield`/`hack_grid` in trainer.py
         # map_bound: for `map_mask`
         # pose_center: for pose generation
         # pose_radius: for pose generation
+        # hsv?: for color modification
         self.map_data = {}
 
     # @virtual
@@ -100,6 +101,8 @@ class SealBBoxMapper(SealMapper):
             'scale': 1 / source_to_target_scale,
             'center': from_center
         }
+        if 'hsv' in seal_config:
+            self.map_data['hsv'] = seal_config['hsv']
         self.map_data_conversion(force=True)
 
     @torch.cuda.amp.autocast(enabled=False)
@@ -109,7 +112,7 @@ class SealBBoxMapper(SealMapper):
         has_dirs = not dirs is None
         map_mask = self.map_mask(points)
         if not map_mask.any():
-            return points, dirs, 0
+            return points, dirs, []
 
         inner_points = points[map_mask]
         inner_dirs = dirs[map_mask] if has_dirs else None
@@ -137,7 +140,7 @@ class SealBBoxMapper(SealMapper):
         # trimesh.PointCloud(points[~inner_points_indices].cpu().numpy()).export(
         #     'tmp/others.obj')
 
-        return points_copy, dirs_copy, N_points
+        return points_copy, dirs_copy, map_mask
 
 
 # brush tool, increase/decrease the surface height along normal direction
@@ -182,6 +185,8 @@ class SealBrushMapper(SealMapper):
             'attenuation_distance': seal_config['attenuationDistance'],
             'attenuation_mode': seal_config['attenuationMode']
         }
+        if 'hsv' in seal_config:
+            self.map_data['hsv'] = seal_config['hsv']
         self.map_data_conversion(force=True)
 
     def map_to_origin(self, points: Union[torch.Tensor, np.ndarray], dirs: Union[torch.Tensor, np.ndarray] = None):
@@ -190,7 +195,7 @@ class SealBrushMapper(SealMapper):
         has_dirs = False
         map_mask = self.map_mask(points)
         if not map_mask.any():
-            return points, dirs, 0
+            return points, dirs, []
 
         inner_points = points[map_mask]
         inner_dirs = dirs[map_mask] if has_dirs else None
@@ -218,7 +223,7 @@ class SealBrushMapper(SealMapper):
         points_copy = points.clone()
         points_copy[map_mask] = points_mapped
 
-        return points_copy, dirs, N_points
+        return points_copy, dirs, map_mask
 
 
 # control point (anchor) tool
@@ -261,6 +266,8 @@ class SealAnchorMapper(SealMapper):
             'len_h': len_h,
             'radius': seal_config['radius']
         }
+        if 'hsv' in seal_config:
+            self.map_data['hsv'] = seal_config['hsv']
         self.map_data_conversion(force=True)
 
     def map_to_origin(self, points: torch.Tensor, dirs: torch.Tensor = None):
@@ -269,7 +276,7 @@ class SealAnchorMapper(SealMapper):
         has_dirs = False
         map_mask = self.map_mask(points)
         if not map_mask.any():
-            return points, dirs, 0
+            return points, dirs, []
 
         # project points to anchor sphere
         projected_points = self.project_points(
@@ -315,7 +322,7 @@ class SealAnchorMapper(SealMapper):
         # trimesh.PointCloud(projected_offset_points.cpu().numpy()).export(
         #     'tmp/projected.obj')
 
-        return points_copy, dirs, valid_mask.sum()
+        return points_copy, dirs, valid_mask
 
     def project_points(self, plane_norm: torch.Tensor, plane_point: torch.Tensor, target_points: torch.Tensor):
         v_target_to_plane = target_points - plane_point  # N*3

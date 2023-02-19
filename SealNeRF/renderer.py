@@ -10,8 +10,8 @@ import raymarching
 from nerf.renderer import NeRFRenderer
 from .utils import custom_meshgrid
 from .seal_utils import get_seal_mapper
+from .color_utils import rgb2hsv_torch, hsv2rgb_torch
 
-import time
 
 def sample_pdf(bins, weights, n_samples, det=False):
     # This implementation is from NeRF
@@ -61,6 +61,15 @@ def plot_pointcloud(pc, color=None):
     # sphere
     sphere = trimesh.creation.icosphere(radius=1)
     trimesh.Scene([pc, axes, sphere]).show()
+
+
+def modify_hsv(rgb: torch.Tensor, modification: torch.Tensor):
+    N = rgb.shape[0]
+    hsv = rgb2hsv_torch(rgb.view(1, 3, N))
+    hsv[:, 0, :] += modification[0]
+    hsv[:, 1, :] += modification[1]
+    hsv[:, 2, :] += modification[2]
+    return hsv2rgb_torch(hsv).view(N, 3)
 
 
 class SealNeRFRenderer(NeRFRenderer):
@@ -234,7 +243,7 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
         for k, v in density_outputs.items():
             density_outputs[k] = v.view(-1, v.shape[-1])
 
-        mapped_final_xyzs, mapped_final_dirs, mapped_count = self.seal_mapper.map_to_origin(
+        mapped_final_xyzs, mapped_final_dirs, mapped_mask = self.seal_mapper.map_to_origin(
             xyzs.view(-1, 3), dirs.view(-1, 3))
 
         mask = weights > 1e-4  # hard coded
@@ -317,7 +326,7 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
 
             #plot_pointcloud(xyzs.reshape(-1, 3).detach().cpu().numpy())
 
-            mapped_xyzs, mapped_dirs, mapped_count = self.seal_mapper.map_to_origin(
+            mapped_xyzs, mapped_dirs, mapped_mask = self.seal_mapper.map_to_origin(
                 xyzs.view(-1, 3), dirs.view(-1, 3))
 
             # trimesh.PointCloud(
@@ -331,6 +340,10 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
             # sigmas = density_outputs['sigma']
             # rgbs = self.color(xyzs, dirs, **density_outputs)
             sigmas = self.density_scale * sigmas
+
+            if 'hsv' in self.seal_mapper.map_data:
+                rgbs[mapped_mask] = modify_hsv(rgbs[mapped_mask], self.seal_mapper.map_data['hsv'])
+
 
             #print(f'valid RGB query ratio: {mask.sum().item() / mask.shape[0]} (total = {mask.sum().item()})')
 
@@ -396,7 +409,7 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
                                                             self.cascade, self.grid_size, nears, fars, 128, perturb if step == 0 else False, dt_gamma, max_steps)
 
                 # t = time.time()
-                mapped_xyzs, mapped_dirs, mapped_count = self.seal_mapper.map_to_origin(
+                mapped_xyzs, mapped_dirs, mapped_mask = self.seal_mapper.map_to_origin(
                     xyzs.view(-1, 3), dirs.view(-1, 3))
                 # print(step, time.time() - t)
 
@@ -406,6 +419,9 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
                 # sigmas = density_outputs['sigma']
                 # rgbs = self.color(xyzs, dirs, **density_outputs)
                 sigmas = self.density_scale * sigmas
+
+                if 'hsv' in self.seal_mapper.map_data and len(mapped_mask):
+                    rgbs[mapped_mask] = modify_hsv(rgbs[mapped_mask], self.seal_mapper.map_data['hsv'])
 
                 raymarching.composite_rays(
                     n_alive, n_step, rays_alive, rays_t, sigmas, rgbs, deltas, weights_sum, depth, image, T_thresh)
