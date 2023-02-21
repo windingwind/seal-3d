@@ -478,7 +478,7 @@ class Trainer(object):
         # MSE loss
         loss = self.criterion(pred_rgb, gt_rgb).mean(-1) # [B, N, 3] --> [B, N]
 
-        if 'depth' in data and N % math.sqrt(N) == 0:
+        if 'depth' in data:
             gt_depth = data['depth']
             pred_depth = outputs['depth']
             loss += self.criterion_depth(pred_depth, gt_depth)
