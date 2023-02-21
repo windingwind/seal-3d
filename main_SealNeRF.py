@@ -72,6 +72,17 @@ if __name__ == '__main__':
                         help="threshold for density grid to be occupied")
     parser.add_argument('--bg_radius', type=float, default=-1,
                         help="if positive, use a background model at sphere(bg_radius)")
+    
+    # seal options
+    # pretraining strategy
+    parser.add_argument('--pretraining_epochs', type=int, default=10,
+                        help="num epochs for local pretraining")
+    parser.add_argument('--pretraining_point_step', type=float, default=0.05,
+                        help="pretraining point sampling step")
+    parser.add_argument('--pretraining_angle_step', type=float, default=45,
+                        help="pretraining angle sampling step in degree")
+    parser.add_argument('--pretraining_batch_size', type=int, default=4096,
+                        help="pretraining angle sampling step in degree")
     # wether to use generated camera poses rotating the seal_config's pose_center within pose_radius
     parser.add_argument('--custom_pose', action='store_true',
                         help="use generated poses")
@@ -200,8 +211,13 @@ if __name__ == '__main__':
         metrics = [PSNRMeter(), LPIPSMeter(device=device)]
         teacher_trainer = OriginalTrainer('ngp', opt, teacher_model, device=device, workspace=opt.teacher_workspace, optimizer=optimizer, criterion=criterion,
                                           ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.teacher_ckpt, eval_interval=50)
-        trainer = SealTrainer('ngp', opt, model, teacher_trainer, proxy_eval=True, device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, ema_decay=0.95,
-                              fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.ckpt, eval_interval=1, max_keep_ckpt=999)
+        trainer = SealTrainer('ngp', opt, model, teacher_trainer, proxy_eval=True,
+                              pretraining_epochs=opt.pretraining_epochs,
+                              pretraining_point_step=opt.pretraining_point_step,
+                              pretraining_angle_step=opt.pretraining_angle_step,
+                              pretraining_batch_size=opt.pretraining_batch_size,
+                              device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, ema_decay=0.95,
+                              fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.ckpt, eval_interval=10, max_keep_ckpt=999)
 
         if opt.custom_pose:
             train_dataset = SealDataset(

@@ -1,12 +1,32 @@
+import os
+import tensorboardX
 import torch
+import tqdm
 from nerf.utils import Trainer as OriginalTrainer
 
 
 # the trainer of seal nerf main model
 class SealTrainer(OriginalTrainer):
-    def __init__(self, name, opt, student_model, teacher_trainer, proxy_train=True, proxy_test=False, proxy_eval=False, criterion=None, optimizer=None, ema_decay=None, lr_scheduler=None, metrics=..., local_rank=0, world_size=1, device=None, mute=False, fp16=False, eval_interval=1, max_keep_ckpt=2, workspace='workspace', best_mode='min', use_loss_as_metric=True, report_metric_at_train=False, use_checkpoint="latest", use_tensorboardX=True, scheduler_update_every_step=False):
+    def __init__(self, name, opt, student_model, teacher_trainer, pretraining_epochs=0, pretraining_point_step=0.05, pretraining_angle_step=45, pretraining_batch_size=4096, proxy_train=True, proxy_test=False, proxy_eval=False, criterion=None, optimizer=None, ema_decay=None, lr_scheduler=None, metrics=..., local_rank=0, world_size=1, device=None, mute=False, fp16=False, eval_interval=1, max_keep_ckpt=2, workspace='workspace', best_mode='min', use_loss_as_metric=True, report_metric_at_train=False, use_checkpoint="latest", use_tensorboardX=True, scheduler_update_every_step=False):
         super().__init__(name, opt, student_model, criterion, optimizer, ema_decay, lr_scheduler, metrics, local_rank, world_size, device, mute, fp16, eval_interval,
                          max_keep_ckpt, workspace, best_mode, use_loss_as_metric, report_metric_at_train, use_checkpoint, use_tensorboardX, scheduler_update_every_step)
+        # pretrain epochs before the real training starts
+        self.pretraining_epochs = pretraining_epochs
+        self.pretraining_batch_size = pretraining_batch_size
+        if self.pretraining_epochs > 0:
+            self.pretraining_points, self.pretraining_dirs = teacher_trainer.model.seal_mapper.sample_points(
+                pretraining_point_step, pretraining_angle_step)
+            self.pretraining_points = self.pretraining_points.to(
+                device, torch.float32)
+            self.pretraining_dirs = self.pretraining_dirs.to(
+                device, torch.float32)
+            self.pretraining_criterion = torch.nn.L1Loss().to(device)
+            mapped_points, mapped_dirs, mapped_mask = teacher_trainer.model.seal_mapper.map_to_origin(self.pretraining_points, torch.zeros_like(
+                self.pretraining_points, device=device, dtype=torch.float32) + torch.tensor([1, 0, 0], device=device, dtype=torch.float32))
+            gt_sigma, gt_color = teacher_trainer.model(
+                mapped_points, mapped_dirs)
+            self.pretraining_sigmas = gt_sigma.detach()
+
         # use teacher trainer instead of teacher model directly
         # to make sure it's properly initialized, e.g. device
         self.teacher_trainer = teacher_trainer
@@ -15,6 +35,151 @@ class SealTrainer(OriginalTrainer):
         self.proxy_train = proxy_train
         self.proxy_eval = proxy_eval
         self.proxy_test = proxy_test
+
+    def train(self, train_loader, valid_loader, max_epochs):
+        if self.use_tensorboardX and self.local_rank == 0:
+            self.writer = tensorboardX.SummaryWriter(
+                os.path.join(self.workspace, "run", self.name))
+
+        # mark untrained region (i.e., not covered by any camera from the training dataset)
+        if self.model.cuda_ray:
+            self.model.mark_untrained_grid(
+                train_loader._data.poses, train_loader._data.intrinsics)
+
+        # get a ref to error_map
+        self.error_map = train_loader._data.error_map
+
+        first_epoch = self.epoch + 1
+
+        for epoch in range(self.epoch + 1, max_epochs + 1):
+            self.epoch = epoch
+
+            if epoch - first_epoch < self.pretraining_epochs:
+                self.pretrain_one_epoch()
+            else:
+                self.train_one_epoch(train_loader)
+
+            if self.workspace is not None and self.local_rank == 0:
+                self.save_checkpoint(full=True, best=False)
+
+            if self.epoch % self.eval_interval == 0:
+                self.evaluate_one_epoch(valid_loader)
+                self.save_checkpoint(full=False, best=True)
+
+        if self.use_tensorboardX and self.local_rank == 0:
+            self.writer.close()
+        return super().train(train_loader, valid_loader, max_epochs)
+
+    def pretrain_one_epoch(self):
+        self.log(
+            f"==> Start Pre-Training Epoch {self.epoch}, lr={self.optimizer.param_groups[0]['lr']:.6f} ...")
+
+        total_loss = 0
+        if self.local_rank == 0 and self.report_metric_at_train:
+            for metric in self.metrics:
+                metric.clear()
+
+        self.model.train()
+
+        N_points = self.pretraining_points.shape[0]
+        steps = list(range(0, N_points, self.pretraining_batch_size))
+        if not len(steps):
+            return
+        if steps[-1] != N_points:
+            steps.append(N_points)
+
+        if self.local_rank == 0:
+            pbar = tqdm.tqdm(total=len(steps) - 1,
+                             bar_format='{desc}: {percentage:3.0f}% {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
+
+        self.teacher_trainer.model.hack_bitfield()
+
+        self.local_step = 0
+
+        for i in range(0, len(steps) - 1):
+            self.local_step += 1
+            self.global_step += 1
+
+            self.optimizer.zero_grad()
+
+            self._density_grid = self.model.density_grid
+
+            if self.model.cuda_ray:
+                with torch.cuda.amp.autocast(enabled=self.fp16):
+                    self.model.update_extra_state()
+
+            points = self.pretraining_points[steps[i]:steps[i+1]]
+            # dirs = self.pretraining_dirs[torch.randint(
+            #     self.pretraining_dirs.shape[0], (steps[i+1] - steps[i],), device=self.device)]
+            # dirs = torch.zeros_like(
+            #     points, device=self.device, dtype=torch.float32) + torch.tensor([1, 0, 0], device=self.device, dtype=torch.float32)
+
+            with torch.cuda.amp.autocast(enabled=self.fp16):
+                loss = self.pretrain_step({
+                    'points': points,
+                    # 'dirs': dirs
+                    'indices': torch.arange(steps[i], steps[i+1], 1)
+                })
+
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+
+            if self.scheduler_update_every_step:
+                self.lr_scheduler.step()
+
+            loss_val = loss.item()
+            total_loss += loss_val
+
+            if self.local_rank == 0:
+                # if self.report_metric_at_train:
+                #     for metric in self.metrics:
+                #         metric.update(preds, truths)
+
+                if self.use_tensorboardX:
+                    self.writer.add_scalar(
+                        "pretrain/loss", loss_val, self.global_step)
+                    self.writer.add_scalar(
+                        "pretrain/lr", self.optimizer.param_groups[0]['lr'], self.global_step)
+
+                if self.scheduler_update_every_step:
+                    pbar.set_description(
+                        f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f}), lr={self.optimizer.param_groups[0]['lr']:.6f}")
+                else:
+                    pbar.set_description(
+                        f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f})")
+                pbar.update(self.pretraining_batch_size)
+
+        if self.ema is not None:
+            self.ema.update()
+
+        average_loss = total_loss / self.local_step
+        self.stats["loss"].append(average_loss)
+
+        if self.local_rank == 0:
+            pbar.close()
+            if self.report_metric_at_train:
+                for metric in self.metrics:
+                    self.log(metric.report(), style="red")
+                    if self.use_tensorboardX:
+                        metric.write(self.writer, self.epoch, prefix="train")
+                    metric.clear()
+
+        if not self.scheduler_update_every_step:
+            if isinstance(self.lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                self.lr_scheduler.step(average_loss)
+            else:
+                self.lr_scheduler.step()
+
+        self.log(f"==> Finished Epoch {self.epoch}.")
+
+    def pretrain_step(self, data):
+        pred_sigma = self.model.density(data['points'])['sigma']
+        sigma_loss = self.pretraining_criterion(
+            pred_sigma, self.pretraining_sigmas[data['indices']])
+        # color_loss = self.pretraining_criterion(pred_color, gt_color)
+        loss = sigma_loss
+        return loss
 
     # proxy the ground truth RGB from teacher model
     def proxy_truth(self, data, all_ray: bool = True):
@@ -28,7 +193,7 @@ class SealTrainer(OriginalTrainer):
         # if we want a full image (B, H, W, C) or just rays (B, N, C)
         is_full = False
         if 'images' in data:
-            images = data['images'] # [B, N, 3/4]
+            images = data['images']  # [B, N, 3/4]
             is_full = images.ndim == 4
             image_shape = images.shape
         elif 'images_shape' in data:

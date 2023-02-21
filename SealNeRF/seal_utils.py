@@ -9,6 +9,7 @@ from trimesh.creation import uv_sphere
 from trimesh.proximity import ProximityQuery
 from scipy.optimize import leastsq
 from skspatial.objects import Plane
+from scipy.spatial.transform import Rotation
 
 
 # the virtual root class of all kinds of seal mappers
@@ -53,6 +54,22 @@ class SealMapper:
     # we could use oriented bbox to minify the search space
     def map_mask(self, points: torch.Tensor) -> torch.BoolTensor:
         return torch.logical_and(points.all(1), torch.logical_and(self.map_data['map_bound'][1] > points, points > self.map_data['map_bound'][0]).all(1))
+
+    def sample_points(self, point_step=0.005, angle_step = 45):
+        coords_min, coords_max = self.map_data['force_fill_bound']
+        X, Y, Z = torch.meshgrid(torch.arange(coords_min[0], coords_max[0], step=point_step),
+                                 torch.arange(
+                                     coords_min[1], coords_max[1], step=point_step),
+                                 torch.arange(coords_min[2], coords_max[2], step=point_step))
+        self.sampled_points = torch.stack([X, Y, Z], dim=-1).reshape(-1, 3).to(self.device)
+
+        r_x, r_y, r_z = torch.meshgrid(torch.arange(0, 360, step=angle_step),
+                                       torch.arange(0, 360, step=angle_step),
+                                       torch.arange(0, 360, step=angle_step))
+        eulers = torch.stack([r_x, r_y, r_z], dim=-1).reshape(-1, 3)
+        self.sampled_dirs = torch.from_numpy(Rotation.from_euler('xyz', eulers.numpy(), degrees=True).apply(np.array([1-1e-5,0,0]))).to(self.device)
+        return self.sampled_points, self.sampled_dirs
+
 
 # seal tool, transform and resize space inside a bbox
 # TODO: use oriented bbox
@@ -108,6 +125,7 @@ class SealBBoxMapper(SealMapper):
     @torch.cuda.amp.autocast(enabled=False)
     def map_to_origin(self, points: torch.Tensor, dirs: torch.Tensor = None):
         self.map_data_conversion(points)
+        self.sample_points()
         # points & dirs: [N, 3]
         has_dirs = not dirs is None
         map_mask = self.map_mask(points)
