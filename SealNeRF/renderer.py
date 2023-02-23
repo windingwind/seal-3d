@@ -78,7 +78,7 @@ class SealNeRFRenderer(NeRFRenderer):
                          min_near=min_near, density_thresh=density_thresh, bg_radius=bg_radius)
         self.seal_mapper = get_seal_mapper(seal_config_path)
         coords_min, coords_max = torch.floor(
-            (self.seal_mapper.map_data['force_fill_bound'] / self.bound + 0.5) * self.grid_size)
+            ((self.seal_mapper.map_data['force_fill_bound'] + self.bound) / self.bound / 2) * self.grid_size)
         X, Y, Z = torch.meshgrid(torch.arange(coords_min[0], coords_max[0]),
                                  torch.arange(coords_min[1], coords_max[1]),
                                  torch.arange(coords_min[2], coords_max[2]))
