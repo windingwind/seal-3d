@@ -53,7 +53,7 @@ class SealMapper:
     # TODO: if we implement ray contact with mesh/point signed distance to mesh in PyTorch,
     # we could use oriented bbox to minify the search space
     def map_mask(self, points: torch.Tensor) -> torch.BoolTensor:
-        return torch.logical_and(points.all(1), torch.logical_and(self.map_data['map_bound'][1] > points, points > self.map_data['map_bound'][0]).all(1))
+        return torch.logical_and(points.all(1), torch.logical_and(self.map_data['map_bound'][1] >= points, points >= self.map_data['map_bound'][0]).all(1))
 
     def sample_points(self, point_step=0.005, angle_step = 45):
         coords_min, coords_max = self.map_data['force_fill_bound']
@@ -68,6 +68,9 @@ class SealMapper:
                                        torch.arange(0, 360, step=angle_step))
         eulers = torch.stack([r_x, r_y, r_z], dim=-1).reshape(-1, 3)
         self.sampled_dirs = torch.from_numpy(Rotation.from_euler('xyz', eulers.numpy(), degrees=True).apply(np.array([1-1e-5,0,0]))).to(self.device)
+
+        # trimesh.PointCloud(
+        #     self.sampled_points.cpu().numpy()).export('tmp/sampled.obj')
         return self.sampled_points, self.sampled_dirs
 
 
@@ -106,9 +109,13 @@ class SealBBoxMapper(SealMapper):
         self.from_mesh.export(os.path.join(config_path, 'from.obj'))
         self.to_mesh.export(os.path.join(config_path, 'to.obj'))
 
+        # extend bbox a little
+        # bbox = np.array([self.to_mesh.bounds[0] - 0.001, self.to_mesh.bounds[1] + 0.001])
+        bbox = self.to_mesh.bounds
+
         self.map_data = {
-            'force_fill_bound': self.to_mesh.bounds,
-            'map_bound': self.to_mesh.bounds,
+            'force_fill_bound': bbox,
+            'map_bound': bbox,
             'pose_center': (from_center + to_center) / 2,
             'pose_radius': np.linalg.norm(from_center - to_center, 2) * 10,
             # 4 * 4
@@ -125,7 +132,6 @@ class SealBBoxMapper(SealMapper):
     @torch.cuda.amp.autocast(enabled=False)
     def map_to_origin(self, points: torch.Tensor, dirs: torch.Tensor = None):
         self.map_data_conversion(points)
-        self.sample_points()
         # points & dirs: [N, 3]
         has_dirs = not dirs is None
         map_mask = self.map_mask(points)
@@ -137,25 +143,26 @@ class SealBBoxMapper(SealMapper):
 
         N_points, N_dims = inner_points.shape
 
-        origin_inner_points = torch.matmul(self.map_data['transform'], torch.vstack(
-            [inner_points.T, torch.zeros([1, N_points], device=inner_points.device)])).T[:, :N_dims]
+        transformed_inner_points = torch.matmul(self.map_data['transform'], torch.vstack(
+            [inner_points.T, torch.ones([1, N_points], device=inner_points.device)])).T[:, :N_dims]
+
+        origin_inner_points = (
+            transformed_inner_points - self.map_data['center']) * self.map_data['scale'] + self.map_data['center']
+
         origin_inner_dirs = torch.matmul(
             self.map_data['rotation'], inner_dirs.T).T if has_dirs else None
         points_copy = points.clone()
         dirs_copy = dirs.clone() if has_dirs else None
-
-        origin_inner_points = (
-            origin_inner_points - self.map_data['center']) * self.map_data['scale'] + self.map_data['center']
 
         points_copy[map_mask] = origin_inner_points
         if has_dirs:
             dirs_copy[map_mask] = origin_inner_dirs
 
         # trimesh.PointCloud(
-        #     points[inner_points_indices].cpu().numpy()).export('tmp/raw.obj')
-        # trimesh.PointCloud(points_copy[inner_points_indices].cpu().numpy()).export(
+        #     points[map_mask].cpu().numpy()).export('tmp/raw.obj')
+        # trimesh.PointCloud(points_copy[map_mask].cpu().numpy()).export(
         #     'tmp/mapped.obj')
-        # trimesh.PointCloud(points[~inner_points_indices].cpu().numpy()).export(
+        # trimesh.PointCloud(points[~map_mask].cpu().numpy()).export(
         #     'tmp/others.obj')
 
         return points_copy, dirs_copy, map_mask
