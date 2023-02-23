@@ -7,25 +7,47 @@ from nerf.utils import Trainer as OriginalTrainer
 
 # the trainer of seal nerf main model
 class SealTrainer(OriginalTrainer):
-    def __init__(self, name, opt, student_model, teacher_trainer, pretraining_epochs=0, pretraining_point_step=0.05, pretraining_angle_step=45, pretraining_batch_size=4096, proxy_train=True, proxy_test=False, proxy_eval=False, criterion=None, optimizer=None, ema_decay=None, lr_scheduler=None, metrics=..., local_rank=0, world_size=1, device=None, mute=False, fp16=False, eval_interval=1, max_keep_ckpt=2, workspace='workspace', best_mode='min', use_loss_as_metric=True, report_metric_at_train=False, use_checkpoint="latest", use_tensorboardX=True, scheduler_update_every_step=False):
-        super().__init__(name, opt, student_model, criterion, optimizer, ema_decay, lr_scheduler, metrics, local_rank, world_size, device, mute, fp16, eval_interval,
+    def __init__(self, name, opt, student_model, teacher_trainer, pretraining_epochs=0, pretraining_point_step=0.05, pretraining_angle_step=45, pretraining_batch_size=4096, proxy_train=True, proxy_test=False, proxy_eval=False, criterion=None, optimizer=None, ema_decay=None, lr_scheduler=None, metrics=..., local_rank=0, world_size=1, device=None, mute=False, fp16=False, eval_interval=1, eval_count=None, max_keep_ckpt=2, workspace='workspace', best_mode='min', use_loss_as_metric=True, report_metric_at_train=False, use_checkpoint="latest", use_tensorboardX=True, scheduler_update_every_step=False):
+        super().__init__(name, opt, student_model, criterion, optimizer, ema_decay, lr_scheduler, metrics, local_rank, world_size, device, mute, fp16, eval_interval, eval_count,
                          max_keep_ckpt, workspace, best_mode, use_loss_as_metric, report_metric_at_train, use_checkpoint, use_tensorboardX, scheduler_update_every_step)
         # pretrain epochs before the real training starts
         self.pretraining_epochs = pretraining_epochs
         self.pretraining_batch_size = pretraining_batch_size
         if self.pretraining_epochs > 0:
+            # sample points and dirs from seal mapper
             self.pretraining_points, self.pretraining_dirs = teacher_trainer.model.seal_mapper.sample_points(
                 pretraining_point_step, pretraining_angle_step)
             self.pretraining_points = self.pretraining_points.to(
                 device, torch.float32)
             self.pretraining_dirs = self.pretraining_dirs.to(
                 device, torch.float32)
+            # simply use L1 to compute pretraining loss
             self.pretraining_criterion = torch.nn.L1Loss().to(device)
+            # map sampled points
             mapped_points, mapped_dirs, mapped_mask = teacher_trainer.model.seal_mapper.map_to_origin(self.pretraining_points, torch.zeros_like(
                 self.pretraining_points, device=device, dtype=torch.float32) + torch.tensor([1, 0, 0], device=device, dtype=torch.float32))
+            # filter sampled points. only store masked ones
+            self.pretraining_points = self.pretraining_points[mapped_mask]
+            N_points = self.pretraining_points.shape[0]
+            # prepare sampled dirs so we won't need to do randomly sampling in the tringing time
+            self.pretraining_dirs = self.pretraining_dirs[torch.randint(
+                self.pretraining_dirs.shape[0], (N_points,), device=self.device)]
+
+            # infer gt sigma & color from teacher model and store them
+            mapped_points = mapped_points[mapped_mask]
+            mapped_dirs = mapped_dirs[mapped_mask]
             gt_sigma, gt_color = teacher_trainer.model(
                 mapped_points, mapped_dirs)
             self.pretraining_sigmas = gt_sigma.detach()
+            self.pretraining_colors = gt_color.detach()
+
+            # prepare pretraining steps to avoid cuda oom
+            self.pretraining_steps = list(
+                range(0, N_points, self.pretraining_batch_size))
+            if not len(self.pretraining_steps):
+                return
+            if self.pretraining_steps[-1] != N_points:
+                self.pretraining_steps.append(N_points)
 
         # use teacher trainer instead of teacher model directly
         # to make sure it's properly initialized, e.g. device
@@ -54,13 +76,18 @@ class SealTrainer(OriginalTrainer):
         for epoch in range(self.epoch + 1, max_epochs + 1):
             self.epoch = epoch
 
-            if epoch - first_epoch < self.pretraining_epochs:
+            is_pretraining = epoch - first_epoch < self.pretraining_epochs
+
+            if is_pretraining:
+                # skip checkpoint saving for pretraining
                 self.pretrain_one_epoch()
             else:
+                self.freeze_mlp(False)
+                self.set_lr(-1)
                 self.train_one_epoch(train_loader)
 
-            if self.workspace is not None and self.local_rank == 0:
-                self.save_checkpoint(full=True, best=False)
+                if self.workspace is not None and self.local_rank == 0:
+                    self.save_checkpoint(full=True, best=False)
 
             if self.epoch % self.eval_interval == 0:
                 self.evaluate_one_epoch(valid_loader)
@@ -68,11 +95,15 @@ class SealTrainer(OriginalTrainer):
 
         if self.use_tensorboardX and self.local_rank == 0:
             self.writer.close()
-        return super().train(train_loader, valid_loader, max_epochs)
 
-    def pretrain_one_epoch(self):
-        self.log(
-            f"==> Start Pre-Training Epoch {self.epoch}, lr={self.optimizer.param_groups[0]['lr']:.6f} ...")
+    # pretrain one epoch. set silent=True to disable logs to speed up, as one epoch of pretraining can be very fast.
+    def pretrain_one_epoch(self, silent=False):
+        # hardcoded lr. not really necessary.
+        self.set_lr(0.07)
+
+        if not silent:
+            self.log(
+                f"==> Start Pre-Training Epoch {self.epoch}, lr={self.optimizer.param_groups[0]['lr']:.6f} ...")
 
         total_loss = 0
         if self.local_rank == 0 and self.report_metric_at_train:
@@ -81,22 +112,16 @@ class SealTrainer(OriginalTrainer):
 
         self.model.train()
 
-        N_points = self.pretraining_points.shape[0]
-        steps = list(range(0, N_points, self.pretraining_batch_size))
-        if not len(steps):
-            return
-        if steps[-1] != N_points:
-            steps.append(N_points)
+        # freeze MLPs. this is crucial to prevent the model from being globally messed up.
+        self.freeze_mlp()
 
-        if self.local_rank == 0:
-            pbar = tqdm.tqdm(total=len(steps) - 1,
+        if not silent and self.local_rank == 0:
+            pbar = tqdm.tqdm(total=len(self.pretraining_steps) - 1,
                              bar_format='{desc}: {percentage:3.0f}% {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
-
-        self.teacher_trainer.model.hack_bitfield()
 
         self.local_step = 0
 
-        for i in range(0, len(steps) - 1):
+        for i in range(0, len(self.pretraining_steps) - 1):
             self.local_step += 1
             self.global_step += 1
 
@@ -104,11 +129,8 @@ class SealTrainer(OriginalTrainer):
 
             self._density_grid = self.model.density_grid
 
-            if self.model.cuda_ray:
-                with torch.cuda.amp.autocast(enabled=self.fp16):
-                    self.model.update_extra_state()
-
-            points = self.pretraining_points[steps[i]:steps[i+1]]
+            points = self.pretraining_points[self.pretraining_steps[i]                                             :self.pretraining_steps[i+1]]
+            dirs = self.pretraining_dirs[self.pretraining_steps[i]                                         :self.pretraining_steps[i+1]]
             # dirs = self.pretraining_dirs[torch.randint(
             #     self.pretraining_dirs.shape[0], (steps[i+1] - steps[i],), device=self.device)]
             # dirs = torch.zeros_like(
@@ -117,25 +139,21 @@ class SealTrainer(OriginalTrainer):
             with torch.cuda.amp.autocast(enabled=self.fp16):
                 loss = self.pretrain_step({
                     'points': points,
-                    # 'dirs': dirs
-                    'indices': torch.arange(steps[i], steps[i+1], 1)
+                    'dirs': dirs,
+                    'indices': [self.pretraining_steps[i], self.pretraining_steps[i+1]]
                 })
 
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
 
-            if self.scheduler_update_every_step:
+            if not silent and self.scheduler_update_every_step:
                 self.lr_scheduler.step()
 
             loss_val = loss.item()
             total_loss += loss_val
 
-            if self.local_rank == 0:
-                # if self.report_metric_at_train:
-                #     for metric in self.metrics:
-                #         metric.update(preds, truths)
-
+            if not silent and self.local_rank == 0:
                 if self.use_tensorboardX:
                     self.writer.add_scalar(
                         "pretrain/loss", loss_val, self.global_step)
@@ -153,33 +171,44 @@ class SealTrainer(OriginalTrainer):
         if self.ema is not None:
             self.ema.update()
 
-        average_loss = total_loss / self.local_step
-        self.stats["loss"].append(average_loss)
-
-        if self.local_rank == 0:
+        if not silent and self.local_rank == 0:
             pbar.close()
-            if self.report_metric_at_train:
-                for metric in self.metrics:
-                    self.log(metric.report(), style="red")
-                    if self.use_tensorboardX:
-                        metric.write(self.writer, self.epoch, prefix="train")
-                    metric.clear()
 
-        if not self.scheduler_update_every_step:
-            if isinstance(self.lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                self.lr_scheduler.step(average_loss)
-            else:
-                self.lr_scheduler.step()
+        if not silent:
+            self.log(f"==> Finished Epoch {self.epoch}.")
 
-        self.log(f"==> Finished Epoch {self.epoch}.")
-
+    # use both sigma and color to quickly reconstruct modified space
     def pretrain_step(self, data):
-        pred_sigma = self.model.density(data['points'])['sigma']
+        # pred_sigma = self.model.density(data['points'])['sigma']
+        pred_sigma, pred_color = self.model(data['points'], data['dirs'])
         sigma_loss = self.pretraining_criterion(
-            pred_sigma, self.pretraining_sigmas[data['indices']])
-        # color_loss = self.pretraining_criterion(pred_color, gt_color)
-        loss = sigma_loss
+            pred_sigma, self.pretraining_sigmas[data['indices'][0]:data['indices'][1]])
+        color_loss = self.pretraining_criterion(
+            pred_color, self.pretraining_colors[data['indices'][0]:data['indices'][1]])
+        # hardcoded weight. not really necessary as it is just a pretraining.
+        loss = color_loss * 100 + sigma_loss
         return loss
+
+    # freeze all MLPs or unfreeze them by passing `freeze=False`
+    def freeze_mlp(self, freeze: bool = True):
+        def freeze_module_list(module_list: torch.nn.ModuleList):
+            module_list.training = not freeze
+            for i in range(len(module_list)):
+                module_list[i].requires_grad_(not freeze)
+        freeze_module_list(self.model.sigma_net)
+        freeze_module_list(self.model.color_net)
+
+    # manually set learning rate to speedup pretraining. restore the original lr by passing `lr=-1`
+    def set_lr(self, lr: float):
+        if lr < 0:
+            if not hasattr(self, '_cached_lr') or self._cached_lr is None:
+                return
+            lr = self._cached_lr
+            self._cached_lr = None
+        else:
+            self._cached_lr = self.optimizer.param_groups[0]['lr']
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = lr
 
     # proxy the ground truth RGB from teacher model
     def proxy_truth(self, data, all_ray: bool = True):
@@ -204,8 +233,8 @@ class SealTrainer(OriginalTrainer):
             teacher_outputs = self.teacher_trainer.model.render(
                 rays_o, rays_d, staged=True, bg_color=None, perturb=False, force_all_rays=all_ray, **vars(self.opt))
 
-        data['images'] = teacher_outputs['image']
-        data['depth'] = teacher_outputs['depth']
+        data['images'] = torch.nan_to_num(teacher_outputs['image'], nan=0.)
+        data['depth'] = torch.nan_to_num(teacher_outputs['depth'], nan=0.)
         # reshape if it is a full image
         if is_full:
             data['images'] = data['images'].view(*image_shape[:-1], -1)

@@ -290,6 +290,7 @@ class Trainer(object):
                  mute=False, # whether to mute all print
                  fp16=False, # amp optimize level
                  eval_interval=1, # eval once every $ epoch
+                 eval_count=None, # eval $ views
                  max_keep_ckpt=2, # max num of saved ckpts in disk
                  workspace='workspace', # workspace to save logs & ckpts
                  best_mode='min', # the smaller/larger result, the better
@@ -314,6 +315,7 @@ class Trainer(object):
         self.report_metric_at_train = report_metric_at_train
         self.max_keep_ckpt = max_keep_ckpt
         self.eval_interval = eval_interval
+        self.eval_count = eval_count
         self.use_checkpoint = use_checkpoint
         self.use_tensorboardX = use_tensorboardX
         self.time_stamp = time.strftime("%Y-%m-%d_%H-%M-%S")
@@ -480,7 +482,7 @@ class Trainer(object):
 
         if 'depth' in data:
             gt_depth = data['depth']
-            pred_depth = outputs['depth']
+            pred_depth = torch.nan_to_num(outputs['depth'], nan=0.)
             loss += self.criterion_depth(pred_depth, gt_depth)
 
         # patch-based rendering
@@ -906,9 +908,8 @@ class Trainer(object):
             for data in loader:    
                 self.local_step += 1
 
-                # TODO: remove this
-                # for faster test, only evaluate first 50 images
-                if self.local_step > 50:
+                # for faster test, only evaluate first `eval_count` images
+                if self.eval_count is not None and self.local_step > self.eval_count:
                     break
 
                 with torch.cuda.amp.autocast(enabled=self.fp16):
