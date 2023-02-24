@@ -1,13 +1,15 @@
 import os
-from typing import Union
+from typing import Union, Tuple
 
 import json5
 import numpy as np
 import torch
+from pytorch3d.structures import Meshes
+# must be imported after `import torch`
+from pytorch3d import _C
 import trimesh
 from trimesh.creation import uv_sphere
 from trimesh.proximity import ProximityQuery
-from scipy.optimize import leastsq
 from skspatial.objects import Plane
 from scipy.spatial.transform import Rotation
 
@@ -19,11 +21,12 @@ class SealMapper:
         self.dtype = torch.float32
         # variables in `map_data`:
         # force_fill_bound: for `hack_bitfield`/`hack_grid` in trainer.py
-        # map_bound: for `map_mask`
         # pose_center: for pose generation
         # pose_radius: for pose generation
         # hsv?: for color modification
         self.map_data = {}
+        self.map_meshes: Meshes = None
+        self.map_triangles: torch.Tensor = None
 
     # @virtual
     # map the points & dirs back to where they are from
@@ -48,26 +51,29 @@ class SealMapper:
             elif isinstance(v, (float, int)):
                 self.map_data[k] = torch.tensor(
                     v, device=self.device, dtype=self.dtype)
+        self.map_meshes = self.map_meshes.to(self.device)
+        self.map_triangles = self.map_triangles.to(
+            device=self.device, dtype=self.dtype)
 
     # early terminate computation of points outside bbox
-    # TODO: if we implement ray contact with mesh/point signed distance to mesh in PyTorch,
-    # we could use oriented bbox to minify the search space
     def map_mask(self, points: torch.Tensor) -> torch.BoolTensor:
-        return torch.logical_and(points.all(1), torch.logical_and(self.map_data['map_bound'][1] >= points, points >= self.map_data['map_bound'][0]).all(1))
+        return points_in_mesh(points, self.map_triangles)
 
-    def sample_points(self, point_step=0.005, angle_step = 45):
+    def sample_points(self, point_step=0.005, angle_step=45):
         coords_min, coords_max = self.map_data['force_fill_bound']
         X, Y, Z = torch.meshgrid(torch.arange(coords_min[0], coords_max[0], step=point_step),
                                  torch.arange(
                                      coords_min[1], coords_max[1], step=point_step),
                                  torch.arange(coords_min[2], coords_max[2], step=point_step))
-        self.sampled_points = torch.stack([X, Y, Z], dim=-1).reshape(-1, 3).to(self.device)
+        self.sampled_points = torch.stack(
+            [X, Y, Z], dim=-1).reshape(-1, 3).to(self.device)
 
         r_x, r_y, r_z = torch.meshgrid(torch.arange(0, 360, step=angle_step),
                                        torch.arange(0, 360, step=angle_step),
                                        torch.arange(0, 360, step=angle_step))
         eulers = torch.stack([r_x, r_y, r_z], dim=-1).reshape(-1, 3)
-        self.sampled_dirs = torch.from_numpy(Rotation.from_euler('xyz', eulers.numpy(), degrees=True).apply(np.array([1-1e-5,0,0]))).to(self.device)
+        self.sampled_dirs = torch.from_numpy(Rotation.from_euler('xyz', eulers.numpy(
+        ), degrees=True).apply(np.array([1-1e-5, 0, 0]))).to(self.device)
 
         # trimesh.PointCloud(
         #     self.sampled_points.cpu().numpy()).export('tmp/sampled.obj')
@@ -109,13 +115,12 @@ class SealBBoxMapper(SealMapper):
         self.from_mesh.export(os.path.join(config_path, 'from.obj'))
         self.to_mesh.export(os.path.join(config_path, 'to.obj'))
 
-        # extend bbox a little
-        # bbox = np.array([self.to_mesh.bounds[0] - 0.001, self.to_mesh.bounds[1] + 0.001])
-        bbox = self.to_mesh.bounds
+        self.map_meshes = trimesh_to_pytorch3d(self.to_mesh)
+        self.map_triangles = self.map_meshes.verts_packed()[
+            self.map_meshes.faces_packed()]
 
         self.map_data = {
-            'force_fill_bound': bbox,
-            'map_bound': bbox,
+            'force_fill_bound': self.to_mesh.bounds,
             'pose_center': (from_center + to_center) / 2,
             'pose_radius': np.linalg.norm(from_center - to_center, 2) * 10,
             # 4 * 4
@@ -196,12 +201,12 @@ class SealBrushMapper(SealMapper):
                                        )
         self.to_mesh.export(os.path.join(config_path, 'to.obj'))
 
-        # prepare query instance to get brush attenuation
-        self.to_mesh_query = ProximityQuery(self.to_mesh)
+        self.map_meshes = trimesh_to_pytorch3d(self.to_mesh)
+        self.map_triangles = self.map_meshes.verts_packed()[
+            self.map_meshes.faces_packed()]
 
         self.map_data = {
             'force_fill_bound': bound_mesh.bounds,
-            'map_bound': self.to_mesh.bounds,
             'pose_center': bound_mesh.centroid,
             'pose_radius': np.linalg.norm(
                 bound_mesh.bounds[1] - bound_mesh.bounds[0], 2) * 10,
@@ -227,9 +232,8 @@ class SealBrushMapper(SealMapper):
 
         N_points, N_dims = inner_points.shape
 
-        # TODO: implement this in PyTorch
-        brush_border_distance = torch.from_numpy(self.to_mesh_query.signed_distance(
-            inner_points.cpu().numpy())).to(self.device, dtype=self.dtype)
+        brush_border_distance = points_mesh_distance(
+            inner_points, self.map_meshes, self.map_triangles)
 
         points_mapped = inner_points - self.map_data['normal_expand']
         mode = self.map_data['attenuation_mode']
@@ -247,6 +251,13 @@ class SealBrushMapper(SealMapper):
 
         points_copy = points.clone()
         points_copy[map_mask] = points_mapped
+
+        trimesh.PointCloud(
+            points.cpu().numpy()).export('tmp/raw.obj')
+        trimesh.PointCloud(points_copy[map_mask].cpu().numpy()).export(
+            'tmp/mapped_to.obj')
+        trimesh.PointCloud(points[map_mask].cpu().numpy()).export(
+            'tmp/mapped_from.obj')
 
         return points_copy, dirs, map_mask
 
@@ -277,12 +288,14 @@ class SealAnchorMapper(SealMapper):
             seal_config['radius'] * 1.1).vertices + v_anchor
         self.to_mesh = get_trimesh_box(
             np.vstack([anchor_sphere_points, v_anchor + 1.1 * v_translation]))
-
         self.to_mesh.export(os.path.join(config_path, 'to.obj'))
+
+        self.map_meshes = trimesh_to_pytorch3d(self.to_mesh)
+        self.map_triangles = self.map_meshes.verts_packed()[
+            self.map_meshes.faces_packed()]
 
         self.map_data = {
             'force_fill_bound': self.to_mesh.bounds,
-            'map_bound': self.to_mesh.bounds,
             'pose_center': self.to_mesh.centroid,
             'pose_radius': len_translation * 10,
             'v_anchor': v_anchor,
@@ -371,3 +384,88 @@ def get_seal_mapper(config_path: str) -> SealMapper:
 
 def get_trimesh_box(points) -> trimesh.primitives.Box:
     return trimesh.PointCloud(points).bounding_box_oriented
+
+
+def trimesh_to_pytorch3d(mesh: trimesh.Trimesh) -> Meshes:
+    return Meshes(torch.from_numpy(mesh.vertices)[None], torch.from_numpy(mesh.faces)[None])
+
+
+def moller_trumbore(ray_o: torch.Tensor, ray_d: torch.Tensor, tris: torch.Tensor, eps=1e-8) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    https://github.com/facebookresearch/pytorch3d/issues/343
+    The Moller Trumbore algorithm for fast ray triangle intersection
+    Naive batch implementation (m rays and n triangles at the same time)
+    O(n_rays * n_faces) memory usage, parallelized execution
+    Parameters
+    ----------
+    ray_o : torch.Tensor, (n_rays, 3)
+    ray_d : torch.Tensor, (n_rays, 3)
+    tris  : torch.Tensor, (n_faces, 3, 3)
+    """
+    E1 = tris[:, 1] - tris[:, 0]  # vector of edge 1 on triangle (n_faces, 3)
+    E2 = tris[:, 2] - tris[:, 0]  # vector of edge 2 on triangle (n_faces, 3)
+
+    # batch cross product
+    # normal to E1 and E2, automatically batched to (n_faces, 3)
+    N = torch.cross(E1, E2)
+
+    invdet = 1. / -(torch.einsum('md,nd->mn', ray_d, N) +
+                    eps)  # inverse determinant (n_faces, 3)
+
+    # (n_rays, 3) - (n_faces, 3) -> (n_rays, n_faces, 3) automatic broadcast
+    A0 = ray_o[:, None] - tris[None, :, 0]
+    # (n_rays, n_faces, 3) x (n_rays, 3) -> (n_rays, n_faces, 3) no automatic broadcast
+    DA0 = torch.cross(A0, ray_d[:, None].expand(*A0.shape))
+
+    u = torch.einsum('mnd,nd->mn', DA0, E2) * invdet
+    v = -torch.einsum('mnd,nd->mn', DA0, E1) * invdet
+    t = torch.einsum('mnd,nd->mn', A0, N) * \
+        invdet  # t >= 0.0 means this is a ray
+
+    intersection = (t >= 0.0) * (u >= 0.0) * (v >= 0.0) * ((u + v) <= 1.0)
+
+    return intersection.any(1)
+
+
+def points_in_mesh(points: torch.Tensor, triangles: torch.Tensor) -> torch.Tensor:
+    """
+    points: <num>[P, 3]
+    triangles: <num>[F, 3, 3]
+    return: <bool>[P,]
+    """
+    rays_o = torch.concat([points, points])
+
+    # magic number from `trimesh.Trimesh.contains_points`.
+    # the rays_d can be any. use the same ray direction for debug.
+    rays_d = torch.tensor([[0.4395064455,
+                            0.617598629942,
+                            0.652231566745]], device=points.device)
+    rays_d = rays_d.repeat(points.shape[0], 1)
+    rays_d = torch.concat([rays_d, -rays_d])
+
+    mask = moller_trumbore(rays_o, rays_d, triangles)
+    return torch.bitwise_and(mask[:points.shape[0]], mask[-points.shape[0]:])
+
+
+def points_mesh_distance(points: torch.Tensor, meshes: Meshes, tris: torch.Tensor = None) -> torch.Tensor:
+    """
+    https://github.com/facebookresearch/pytorch3d/issues/193
+    points: <num>[P, 3]
+    triangles: pytorch3d.structures.Meshes
+    return: <float>[P,]
+    """
+    # computing tris is time consuming. we can prepare it in advance
+    if tris is None:
+        verts_packed = meshes.verts_packed()
+        faces_packed = meshes.faces_packed()
+        tris = verts_packed[faces_packed]  # (T, 3, 3)
+    tris_first_idx = meshes.mesh_to_faces_packed_first_idx()
+
+    _DEFAULT_MIN_TRIANGLE_AREA: float = 5e-3
+    dists, idxs = _C.point_face_dist_forward(
+        points, torch.tensor(
+            [0], device=points.device), tris, tris_first_idx, points.shape[0], _DEFAULT_MIN_TRIANGLE_AREA
+    )
+
+    dists = torch.sqrt(dists)
+    return dists
