@@ -214,12 +214,12 @@ if __name__ == '__main__':
         teacher_trainer = OriginalTrainer('ngp', opt, teacher_model, device=device, workspace=opt.teacher_workspace, optimizer=optimizer, criterion=criterion,
                                           ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.teacher_ckpt, eval_interval=50)
         trainer = SealTrainer('ngp', opt, model, teacher_trainer, proxy_eval=True,
-                              pretraining_epochs=opt.pretraining_epochs,
-                              pretraining_point_step=opt.pretraining_point_step,
-                              pretraining_angle_step=opt.pretraining_angle_step,
-                              pretraining_batch_size=opt.pretraining_batch_size,
                               device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, ema_decay=0.95,
                               fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.ckpt, eval_interval=opt.eval_interval, eval_count=opt.eval_count, max_keep_ckpt=65535)
+        trainer.init_pretraining(pretraining_epochs=opt.pretraining_epochs,
+                                 pretraining_point_step=opt.pretraining_point_step,
+                                 pretraining_angle_step=opt.pretraining_angle_step,
+                                 pretraining_batch_size=opt.pretraining_batch_size,)
 
         if opt.custom_pose:
             train_dataset = SealDataset(

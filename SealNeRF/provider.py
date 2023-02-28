@@ -346,7 +346,8 @@ class NeRFDataset:
             'W': self.W,
             'rays_o': rays['rays_o'],
             'rays_d': rays['rays_d'],
-            'index': index
+            'data_index': index,
+            'pixel_index': rays['inds'].to('cpu') if 'inds' in rays else None
         }
 
         if self.images is not None:
@@ -374,6 +375,10 @@ class NeRFDataset:
         # an ugly fix... we need to access error_map & poses in trainer.
         loader._data = self
         loader.has_gt = self.images is not None
+        loader.extra_info = {
+            'H': self.H,
+            'W': self.W
+        }
         return loader
 
 
@@ -391,11 +396,13 @@ class SealDataset(NeRFDataset):
 
         B = len(index)  # a list of length 1
 
-        poses = rand_poses(B, self.device, look_at=self.look_at, radius=self.radius)
+        poses = rand_poses(
+            B, self.device, look_at=self.look_at, radius=self.radius)
 
         # sample a low-resolution but full image for CLIP
         # only in training, assert num_rays > 0
-        s = np.nan_to_num(np.sqrt(self.H * self.W / self.num_rays), nan=1.) if self.num_rays > 0 else 1.
+        s = np.nan_to_num(np.sqrt(self.H * self.W / self.num_rays),
+                          nan=1.) if self.num_rays > 0 else 1.
         rH, rW = int(self.H / s), int(self.W / s)
         rays = get_rays(poses, self.intrinsics / s, rH, rW, -1)
 
@@ -404,7 +411,7 @@ class SealDataset(NeRFDataset):
             'W': rW,
             'rays_o': rays['rays_o'],
             'rays_d': rays['rays_d'],
-            
+
         }
         if self.type != 'train':
             data['images_shape'] = [B, *self.image_shape]

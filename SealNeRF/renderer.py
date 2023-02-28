@@ -88,7 +88,7 @@ class SealNeRFRenderer(NeRFRenderer):
     def __init__(self, bound=1, cuda_ray=False, density_scale=1, min_near=0.2, density_thresh=0.01, bg_radius=-1, **kwargs):
         super().__init__(bound=bound, cuda_ray=cuda_ray, density_scale=density_scale,
                          min_near=min_near, density_thresh=density_thresh, bg_radius=bg_radius)
-
+        self.seal_mapper = None
         # Setting bitfield preciously
         # force_fill_bitfield_offsets: np.ndarray = self.force_fill_grid_indices % 8
         # self.force_fill_bitfield_values = torch.rand(
@@ -113,7 +113,8 @@ class SealNeRFRenderer(NeRFRenderer):
     def update_extra_state(self, decay=0.95, S=128):
         # self.force_fill_grids()
         super().update_extra_state(decay, S)
-        self.hack_bitfield()
+        if self.seal_mapper is not None:
+            self.hack_bitfield()
 
     @torch.no_grad()
     def hack_grids(self):
@@ -182,8 +183,11 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
             rays_d.unsqueeze(-2) * z_vals.unsqueeze(-1)
         xyzs = torch.min(torch.max(xyzs, aabb[:3]), aabb[3:])  # a manual clip.
 
-        mapped_xyzs = self.seal_mapper.map_to_origin(
-            xyzs.view(-1, 3))[0].view(xyzs.shape)
+        if self.seal_mapper is not None:
+            mapped_xyzs, _, _ = self.seal_mapper.map_to_origin(
+                xyzs.view(-1, 3))[0].view(xyzs.shape)
+        else:
+            mapped_xyzs = xyzs
 
         #plot_pointcloud(xyzs.reshape(-1, 3).detach().cpu().numpy())
 
@@ -221,8 +225,11 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
                 # a manual clip.
                 new_xyzs = torch.min(torch.max(new_xyzs, aabb[:3]), aabb[3:])
 
-                mapped_new_xyzs = self.seal_mapper.map_to_origin(
-                    new_xyzs.view(-1, 3))[0].view(new_xyzs.shape)
+                if self.seal_mapper is not None:
+                    mapped_new_xyzs, _, _ = self.seal_mapper.map_to_origin(
+                        new_xyzs.view(-1, 3))[0].view(new_xyzs.shape)
+                else:
+                    mapped_new_xyzs = new_xyzs
 
             # only forward new points to save computation
             new_density_outputs = self.density(mapped_new_xyzs.reshape(-1, 3))
@@ -258,8 +265,11 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
         for k, v in density_outputs.items():
             density_outputs[k] = v.view(-1, v.shape[-1])
 
-        mapped_final_xyzs, mapped_final_dirs, mapped_mask = self.seal_mapper.map_to_origin(
-            xyzs.view(-1, 3), dirs.view(-1, 3))
+        if self.seal_mapper is not None:
+            mapped_final_xyzs, mapped_final_dirs, mapped_mask = self.seal_mapper.map_to_origin(
+                xyzs.view(-1, 3), dirs.view(-1, 3))
+        else:
+            mapped_final_xyzs, mapped_final_dirs = xyzs, dirs
 
         mask = weights > 1e-4  # hard coded
         rgbs = self.color(mapped_final_xyzs, mapped_final_dirs,
@@ -341,8 +351,11 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
 
             #plot_pointcloud(xyzs.reshape(-1, 3).detach().cpu().numpy())
 
-            mapped_xyzs, mapped_dirs, mapped_mask = self.seal_mapper.map_to_origin(
-                xyzs.view(-1, 3), dirs.view(-1, 3))
+            if self.seal_mapper is not None:
+                mapped_xyzs, mapped_dirs, mapped_mask = self.seal_mapper.map_to_origin(
+                    xyzs.view(-1, 3), dirs.view(-1, 3))
+            else:
+                mapped_xyzs, mapped_dirs = xyzs, dirs
 
             # trimesh.PointCloud(
             #     xyzs.reshape(-1, 3).detach().cpu().numpy()).export('tmp/xyzs.obj')
@@ -356,12 +369,13 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
             # rgbs = self.color(xyzs, dirs, **density_outputs)
             sigmas = self.density_scale * sigmas
 
-            if 'hsv' in self.seal_mapper.map_data:
-                rgbs[mapped_mask] = modify_hsv(
-                    rgbs[mapped_mask], self.seal_mapper.map_data['hsv'])
-            if 'rgb' in self.seal_mapper.map_data:
-                rgbs[mapped_mask] = modify_rgb(
-                    rgbs[mapped_mask], self.seal_mapper.map_data['rgb'])
+            if self.seal_mapper is not None:
+                if 'hsv' in self.seal_mapper.map_data:
+                    rgbs[mapped_mask] = modify_hsv(
+                        rgbs[mapped_mask], self.seal_mapper.map_data['hsv'])
+                if 'rgb' in self.seal_mapper.map_data:
+                    rgbs[mapped_mask] = modify_rgb(
+                        rgbs[mapped_mask], self.seal_mapper.map_data['rgb'])
 
             #print(f'valid RGB query ratio: {mask.sum().item() / mask.shape[0]} (total = {mask.sum().item()})')
 
@@ -426,10 +440,11 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
                 xyzs, dirs, deltas = raymarching.march_rays(n_alive, n_step, rays_alive, rays_t, rays_o, rays_d, self.bound, self.density_bitfield,
                                                             self.cascade, self.grid_size, nears, fars, 128, perturb if step == 0 else False, dt_gamma, max_steps)
 
-                # t = time.time()
-                mapped_xyzs, mapped_dirs, mapped_mask = self.seal_mapper.map_to_origin(
-                    xyzs.view(-1, 3), dirs.view(-1, 3))
-                # print(step, time.time() - t)
+                if self.seal_mapper is not None:
+                    mapped_xyzs, mapped_dirs, mapped_mask = self.seal_mapper.map_to_origin(
+                        xyzs.view(-1, 3), dirs.view(-1, 3))
+                else:
+                    mapped_xyzs, mapped_dirs = xyzs, dirs
 
                 sigmas, rgbs = self(mapped_xyzs.view(
                     xyzs.shape), mapped_dirs.view(dirs.shape))
@@ -438,12 +453,13 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
                 # rgbs = self.color(xyzs, dirs, **density_outputs)
                 sigmas = self.density_scale * sigmas
 
-                if 'hsv' in self.seal_mapper.map_data and len(mapped_mask):
-                    rgbs[mapped_mask] = modify_hsv(
-                        rgbs[mapped_mask], self.seal_mapper.map_data['hsv'])
-                if 'rgb' in self.seal_mapper.map_data:
-                    rgbs[mapped_mask] = modify_rgb(
-                        rgbs[mapped_mask], self.seal_mapper.map_data['rgb'])
+                if self.seal_mapper is not None:
+                    if 'hsv' in self.seal_mapper.map_data and len(mapped_mask):
+                        rgbs[mapped_mask] = modify_hsv(
+                            rgbs[mapped_mask], self.seal_mapper.map_data['hsv'])
+                    if 'rgb' in self.seal_mapper.map_data:
+                        rgbs[mapped_mask] = modify_rgb(
+                            rgbs[mapped_mask], self.seal_mapper.map_data['rgb'])
                 raymarching.composite_rays(
                     n_alive, n_step, rays_alive, rays_t, sigmas, rgbs, deltas, weights_sum, depth, image, T_thresh)
 

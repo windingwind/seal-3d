@@ -8,25 +8,38 @@ from nerf.utils import Trainer as OriginalTrainer
 
 # the trainer of seal nerf main model
 class SealTrainer(OriginalTrainer):
-    def __init__(self, name, opt, student_model, teacher_trainer, pretraining_epochs=0, pretraining_point_step=0.05, pretraining_angle_step=45, pretraining_batch_size=4096, proxy_train=True, proxy_test=False, proxy_eval=False, criterion=None, optimizer=None, ema_decay=None, lr_scheduler=None, metrics=..., local_rank=0, world_size=1, device=None, mute=False, fp16=False, eval_interval=1, eval_count=None, max_keep_ckpt=2, workspace='workspace', best_mode='min', use_loss_as_metric=True, report_metric_at_train=False, use_checkpoint="latest", use_tensorboardX=True, scheduler_update_every_step=False):
+    def __init__(self, name, opt, student_model, teacher_trainer, proxy_train=True, proxy_test=False, proxy_eval=False, cache_gt=False, criterion=None, optimizer=None, ema_decay=None, lr_scheduler=None, metrics=..., local_rank=0, world_size=1, device=None, mute=False, fp16=False, eval_interval=1, eval_count=None, max_keep_ckpt=2, workspace='workspace', best_mode='min', use_loss_as_metric=True, report_metric_at_train=False, use_checkpoint="latest", use_tensorboardX=True, scheduler_update_every_step=False):
         super().__init__(name, opt, student_model, criterion, optimizer, ema_decay, lr_scheduler, metrics, local_rank, world_size, device, mute, fp16, eval_interval, eval_count,
                          max_keep_ckpt, workspace, best_mode, use_loss_as_metric, report_metric_at_train, use_checkpoint, use_tensorboardX, scheduler_update_every_step)
+        # use teacher trainer instead of teacher model directly
+        # to make sure it's properly initialized, e.g. device
+        self.teacher_trainer = teacher_trainer
+
+        # flags indicating the proxy behavior of different stages
+        self.proxy_train = proxy_train
+        self.proxy_eval = proxy_eval
+        self.proxy_test = proxy_test
+
+        self.cache_gt = cache_gt
+
+    # call this until seal_mapper is initialized
+    def init_pretraining(self, pretraining_epochs=0, pretraining_point_step=0.05, pretraining_angle_step=45, pretraining_batch_size=4096):
         # pretrain epochs before the real training starts
         self.pretraining_epochs = pretraining_epochs
         self.pretraining_batch_size = pretraining_batch_size
         if self.pretraining_epochs > 0:
             # sample points and dirs from seal mapper
-            self.pretraining_points, self.pretraining_dirs = teacher_trainer.model.seal_mapper.sample_points(
+            self.pretraining_points, self.pretraining_dirs = self.teacher_trainer.model.seal_mapper.sample_points(
                 pretraining_point_step, pretraining_angle_step)
             self.pretraining_points = self.pretraining_points.to(
-                device, torch.float32)
+                self.device, torch.float32)
             self.pretraining_dirs = self.pretraining_dirs.to(
-                device, torch.float32)
+                self.device, torch.float32)
             # simply use L1 to compute pretraining loss
-            self.pretraining_criterion = torch.nn.L1Loss().to(device)
+            self.pretraining_criterion = torch.nn.L1Loss().to(self.device)
             # map sampled points
-            mapped_points, mapped_dirs, mapped_mask = teacher_trainer.model.seal_mapper.map_to_origin(self.pretraining_points, torch.zeros_like(
-                self.pretraining_points, device=device, dtype=torch.float32) + torch.tensor([1, 0, 0], device=device, dtype=torch.float32))
+            mapped_points, mapped_dirs, mapped_mask = self.teacher_trainer.model.seal_mapper.map_to_origin(self.pretraining_points, torch.zeros_like(
+                self.pretraining_points, device=self.device, dtype=torch.float32) + torch.tensor([1, 0, 0], device=self.device, dtype=torch.float32))
             # filter sampled points. only store masked ones
             self.pretraining_points = self.pretraining_points[mapped_mask]
             N_points = self.pretraining_points.shape[0]
@@ -37,7 +50,7 @@ class SealTrainer(OriginalTrainer):
             # infer gt sigma & color from teacher model and store them
             mapped_points = mapped_points[mapped_mask]
             mapped_dirs = mapped_dirs[mapped_mask]
-            gt_sigma, gt_color = teacher_trainer.model(
+            gt_sigma, gt_color = self.teacher_trainer.model(
                 mapped_points, mapped_dirs)
             self.pretraining_sigmas = gt_sigma.detach()
             self.pretraining_colors = gt_color.detach()
@@ -49,17 +62,6 @@ class SealTrainer(OriginalTrainer):
                 return
             if self.pretraining_steps[-1] != N_points:
                 self.pretraining_steps.append(N_points)
-
-        # use teacher trainer instead of teacher model directly
-        # to make sure it's properly initialized, e.g. device
-        self.teacher_trainer = teacher_trainer
-
-        # flags indicating the proxy behavior of different stages
-        self.proxy_train = proxy_train
-        self.proxy_eval = proxy_eval
-        self.proxy_test = proxy_test
-
-        self.proxy_train_gt_cache = {}
 
     def train(self, train_loader, valid_loader, max_epochs):
         if self.use_tensorboardX and self.local_rank == 0:
@@ -73,6 +75,18 @@ class SealTrainer(OriginalTrainer):
 
         # get a ref to error_map
         self.error_map = train_loader._data.error_map
+
+        # cache gt
+        # ray mask
+        if self.cache_gt:
+            N_poses = len(train_loader)
+            N_pixles = train_loader.extra_info['H']*train_loader.extra_info['W']
+            self.proxy_cache_mask = torch.zeros(
+                N_poses, N_pixles, dtype=torch.bool)
+            self.proxy_cache_image = torch.zeros(
+                N_poses, N_pixles, 3, dtype=torch.float)
+            self.proxy_cache_depth = torch.zeros(
+                N_poses, N_pixles, dtype=torch.float)
 
         first_epoch = self.epoch + 1
 
@@ -135,10 +149,8 @@ class SealTrainer(OriginalTrainer):
 
             self._density_grid = self.model.density_grid
 
-            points = self.pretraining_points[self.pretraining_steps[i]
-                :self.pretraining_steps[i+1]]
-            dirs = self.pretraining_dirs[self.pretraining_steps[i]
-                :self.pretraining_steps[i+1]]
+            points = self.pretraining_points[self.pretraining_steps[i]:self.pretraining_steps[i+1]]
+            dirs = self.pretraining_dirs[self.pretraining_steps[i]:self.pretraining_steps[i+1]]
             # dirs = self.pretraining_dirs[torch.randint(
             #     self.pretraining_dirs.shape[0], (steps[i+1] - steps[i],), device=self.device)]
             # dirs = torch.zeros_like(
@@ -224,13 +236,6 @@ class SealTrainer(OriginalTrainer):
         if not self.teacher_trainer.model.density_bitfield_hacked:
             self.teacher_trainer.model.hack_bitfield()
 
-        if use_cache and 'index' in data and np.all([data_index in self.proxy_train_gt_cache for data_index in data['index']]):
-            self.proxy_truth_from_cache(data)
-            return
-
-        rays_o = data['rays_o']  # [B, N, 3]
-        rays_d = data['rays_d']  # [B, N, 3]
-
         # if we want a full image (B, H, W, C) or just rays (B, N, C)
         is_full = False
         if 'images' in data:
@@ -241,41 +246,50 @@ class SealTrainer(OriginalTrainer):
             image_shape = data['images_shape']
             is_full = len(image_shape) == 4
 
-        with torch.no_grad():
-            teacher_outputs = self.teacher_trainer.model.render(
-                rays_o, rays_d, staged=True, bg_color=None, perturb=False, force_all_rays=all_ray, **vars(self.opt))
+        # if use_cache, the training can be slower. might be useful with very small dataset
+        use_cache = use_cache and 'pixel_index' in data and not is_full
+        is_skip_computing = False
 
-        data['images'] = torch.nan_to_num(teacher_outputs['image'], nan=0.)
-        data['depth'] = torch.nan_to_num(teacher_outputs['depth'], nan=0.)
+        if use_cache:
+            compute_mask = ~self.proxy_cache_mask[data['data_index'],
+                                                  data['pixel_index']]
+            is_skip_computing = not compute_mask.any()
+
+        rays_o = data['rays_o']  # [B, N, 3]
+        rays_d = data['rays_d']  # [B, N, 3]
+
+        if use_cache:
+            rays_o = rays_o[compute_mask]
+            rays_d = rays_d[compute_mask]
+
+        if not is_skip_computing:
+            with torch.no_grad():
+                teacher_outputs = self.teacher_trainer.model.render(
+                    rays_o, rays_d, staged=True, bg_color=None, perturb=False, force_all_rays=all_ray, **vars(self.opt))
+
+        if use_cache:
+            if not is_skip_computing:
+                self.proxy_cache_image[data['data_index'], data['pixel_index']
+                                       [compute_mask]] = torch.nan_to_num(teacher_outputs['image'], nan=0.).detach().cpu()
+                self.proxy_cache_depth[data['data_index'], data['pixel_index']
+                                       [compute_mask]] = torch.nan_to_num(teacher_outputs['depth'], nan=0.).detach().cpu()
+            data['images'] = self.proxy_cache_image[data['data_index'],
+                                                    data['pixel_index']].to(self.device)
+            data['depth'] = self.proxy_cache_depth[data['data_index'],
+                                                   data['pixel_index']].to(self.device)
+        else:
+            data['images'] = torch.nan_to_num(teacher_outputs['image'], nan=0.)
+            data['depth'] = torch.nan_to_num(teacher_outputs['depth'], nan=0.)
         # reshape if it is a full image
         if is_full:
             data['images'] = data['images'].view(*image_shape[:-1], -1)
             data['depth'] = data['depth'].view(*image_shape[:-1], -1)
 
-        if use_cache and 'index' in data:
-            for i, data_index in enumerate(data['index']):
-                self.proxy_train_gt_cache[data_index] = {
-                    'images': data['images'][i],
-                    'depth': data['depth'][i]
-                }
-
-    def proxy_truth_from_cache(self, data: dict):
-        assigned_keys = self.proxy_train_gt_cache[data['index'][0]].keys()
-        for k in assigned_keys:
-            data[k] = []
-        for i in data['index']:
-            for k, v in self.proxy_train_gt_cache[i].items():
-                data[k].append(v)
-                if isinstance(v, torch.Tensor):
-                    v.detach()
-        for k in assigned_keys:
-            data[k] = torch.stack(data[k])
-
     def train_step(self, data):
         # if self.teacher_trainer.model.density_bitfield_hacked:
         #     self.teacher_trainer.model.restore_bitfield()
         if self.proxy_train:
-            self.proxy_truth(data, use_cache=True)
+            self.proxy_truth(data, use_cache=self.cache_gt)
         return super().train_step(data)
 
     def eval_step(self, data):
