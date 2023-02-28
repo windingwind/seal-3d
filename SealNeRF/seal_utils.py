@@ -12,6 +12,8 @@ from trimesh.creation import uv_sphere
 from trimesh.proximity import ProximityQuery
 from skspatial.objects import Plane
 from scipy.spatial.transform import Rotation
+from sklearn.neighbors import NearestNeighbors
+import open3d as o3d
 
 
 # the virtual root class of all kinds of seal mappers
@@ -21,6 +23,7 @@ class SealMapper:
         self.dtype = torch.float32
         # variables in `map_data`:
         # force_fill_bound: for `hack_bitfield`/`hack_grid` in trainer.py
+        # map_bound: for map_mask
         # pose_center: for pose generation
         # pose_radius: for pose generation
         # hsv?: for color modification
@@ -48,6 +51,9 @@ class SealMapper:
             elif isinstance(v, np.ndarray):
                 self.map_data[k] = torch.from_numpy(v).to(
                     device=self.device, dtype=self.dtype)
+            elif isinstance(v, list):
+                self.map_data[k] = torch.from_numpy(np.asarray(v)).to(
+                    device=self.device, dtype=self.dtype)
             elif isinstance(v, (float, int)):
                 self.map_data[k] = torch.tensor(
                     v, device=self.device, dtype=self.dtype)
@@ -57,7 +63,13 @@ class SealMapper:
 
     # early terminate computation of points outside bbox
     def map_mask(self, points: torch.Tensor) -> torch.BoolTensor:
-        return points_in_mesh(points, self.map_triangles)
+        bound_mask = torch.logical_and(points.all(1), torch.logical_and(
+            self.map_data['map_bound'][1] >= points, points >= self.map_data['map_bound'][0]).all(1))
+        if not bound_mask.any():
+            return bound_mask
+        shape_mask = points_in_mesh(points[bound_mask], self.map_triangles)
+        bound_mask[bound_mask.clone()] = shape_mask
+        return bound_mask
 
     def sample_points(self, point_step=0.005, angle_step=45):
         coords_min, coords_max = self.map_data['force_fill_bound']
@@ -121,6 +133,7 @@ class SealBBoxMapper(SealMapper):
 
         self.map_data = {
             'force_fill_bound': self.to_mesh.bounds,
+            'map_bound': self.to_mesh.bounds,
             'pose_center': (from_center + to_center) / 2,
             'pose_radius': np.linalg.norm(from_center - to_center, 2) * 10,
             # 4 * 4
@@ -132,6 +145,8 @@ class SealBBoxMapper(SealMapper):
         }
         if 'hsv' in seal_config:
             self.map_data['hsv'] = seal_config['hsv']
+        if 'rgb' in seal_config:
+            self.map_data['rgb'] = seal_config['rgb']
         self.map_data_conversion(force=True)
 
     @torch.cuda.amp.autocast(enabled=False)
@@ -178,6 +193,8 @@ class SealBBoxMapper(SealMapper):
 # type: brush
 # raw: [N,3] points
 # normal: [3] decide which side of the plane is the positive side
+# brushType: 'line' | 'curve'
+# brushDepth: float maximun affected depth along the opposite direction of normal
 # brushPressure: float maximun height, can be negative
 # attenuationDistance: float d(point - center) < attenuationDistance, keeps the highest pressure
 # attenuationMode: float d(point - center) > attenuationDistance, pressure attenuates. linear, ease-in, ease-out
@@ -194,11 +211,11 @@ class SealBrushMapper(SealMapper):
 
         # generate force filled grids bound
         normal_expand = plane.normal * seal_config['brushPressure']
-        bound_mesh = get_trimesh_box(np.vstack([points + normal_expand, points - 0.3 * normal_expand])
-                                     )
-        # the target space has twice the height of filled bound
-        self.to_mesh = get_trimesh_box(np.vstack([points + 2 * normal_expand, points - 0.3 * normal_expand])
-                                       )
+        if seal_config['brushType'] == 'line':
+            self.to_mesh = get_trimesh_box(np.vstack([points + 2 * normal_expand, points - seal_config['brushDepth'] * normal_expand])
+                                           )
+        else:
+            self.to_mesh = get_trimesh_fit(points, normal_expand, [-seal_config['brushDepth'], 2])
         self.to_mesh.export(os.path.join(config_path, 'to.obj'))
 
         self.map_meshes = trimesh_to_pytorch3d(self.to_mesh)
@@ -206,10 +223,11 @@ class SealBrushMapper(SealMapper):
             self.map_meshes.faces_packed()]
 
         self.map_data = {
-            'force_fill_bound': bound_mesh.bounds,
-            'pose_center': bound_mesh.centroid,
+            'force_fill_bound': self.to_mesh.bounds,
+            'map_bound': self.to_mesh.bounds,
+            'pose_center': self.to_mesh.centroid,
             'pose_radius': np.linalg.norm(
-                bound_mesh.bounds[1] - bound_mesh.bounds[0], 2) * 10,
+                self.to_mesh.bounds[1] - self.to_mesh.bounds[0], 2) * 10,
             'normal_expand': normal_expand,
             'center': plane.point,
             'attenuation_distance': seal_config['attenuationDistance'],
@@ -217,6 +235,8 @@ class SealBrushMapper(SealMapper):
         }
         if 'hsv' in seal_config:
             self.map_data['hsv'] = seal_config['hsv']
+        if 'rgb' in seal_config:
+            self.map_data['rgb'] = seal_config['rgb']
         self.map_data_conversion(force=True)
 
     def map_to_origin(self, points: Union[torch.Tensor, np.ndarray], dirs: Union[torch.Tensor, np.ndarray] = None):
@@ -296,6 +316,7 @@ class SealAnchorMapper(SealMapper):
 
         self.map_data = {
             'force_fill_bound': self.to_mesh.bounds,
+            'map_bound': self.to_mesh.bounds,
             'pose_center': self.to_mesh.centroid,
             'pose_radius': len_translation * 10,
             'v_anchor': v_anchor,
@@ -306,6 +327,8 @@ class SealAnchorMapper(SealMapper):
         }
         if 'hsv' in seal_config:
             self.map_data['hsv'] = seal_config['hsv']
+        if 'rgb' in seal_config:
+            self.map_data['rgb'] = seal_config['rgb']
         self.map_data_conversion(force=True)
 
     def map_to_origin(self, points: torch.Tensor, dirs: torch.Tensor = None):
@@ -384,6 +407,41 @@ def get_seal_mapper(config_path: str) -> SealMapper:
 
 def get_trimesh_box(points) -> trimesh.primitives.Box:
     return trimesh.PointCloud(points).bounding_box_oriented
+
+
+def get_trimesh_fit(points, normal, growth=[-0.3, 1]) -> trimesh.Trimesh:
+    N = points.shape[0]
+    K = 10
+
+    neigh = NearestNeighbors(n_neighbors=K, radius=0.4)
+    neigh.fit(points)
+    indices = neigh.kneighbors(points, K, return_distance=False)
+
+    faces = []
+
+    for i in range(N):
+        for j in range(1, K):
+            for k in range(j+1, K):
+                x, y, z = i, indices[i][j], indices[i][k]
+                _x, _y, _z = x + N, y + N, z + N
+                faces.append([x, y, z])
+                faces.append([_x, _y, _z])
+                faces.append([x, y, _x])
+                faces.append([_x, y, _y])
+
+    generated_mesh = trimesh.Trimesh(np.concatenate(
+        [points + normal * growth[0], points + normal * growth[1]]), faces)
+    generated_mesh.show()
+
+    o3d_mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(
+        generated_mesh.vertices), o3d.utility.Vector3iVector(generated_mesh.faces))
+
+    voxel_size = max(o3d_mesh.get_max_bound() - o3d_mesh.get_min_bound()) / 16
+    simplified_mesh = o3d_mesh.simplify_vertex_clustering(
+        voxel_size=voxel_size,
+        contraction=o3d.geometry.SimplificationContraction.Average)
+
+    return trimesh.Trimesh(np.asarray(simplified_mesh.vertices), np.asarray(simplified_mesh.triangles)).show()
 
 
 def trimesh_to_pytorch3d(mesh: trimesh.Trimesh) -> Meshes:
