@@ -346,6 +346,7 @@ class NeRFDataset:
             'W': self.W,
             'rays_o': rays['rays_o'],
             'rays_d': rays['rays_d'],
+            'index': index
         }
 
         if self.images is not None:

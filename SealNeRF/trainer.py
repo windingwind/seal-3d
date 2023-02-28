@@ -1,6 +1,7 @@
 import os
 import tensorboardX
 import torch
+import numpy as np
 import tqdm
 from nerf.utils import Trainer as OriginalTrainer
 
@@ -58,6 +59,8 @@ class SealTrainer(OriginalTrainer):
         self.proxy_eval = proxy_eval
         self.proxy_test = proxy_test
 
+        self.proxy_train_gt_cache = {}
+
     def train(self, train_loader, valid_loader, max_epochs):
         if self.use_tensorboardX and self.local_rank == 0:
             self.writer = tensorboardX.SummaryWriter(
@@ -101,6 +104,9 @@ class SealTrainer(OriginalTrainer):
         # hardcoded lr. not really necessary.
         self.set_lr(0.07)
 
+        if not self.model.density_bitfield_hacked:
+            self.model.hack_bitfield()
+
         if not silent:
             self.log(
                 f"==> Start Pre-Training Epoch {self.epoch}, lr={self.optimizer.param_groups[0]['lr']:.6f} ...")
@@ -129,8 +135,10 @@ class SealTrainer(OriginalTrainer):
 
             self._density_grid = self.model.density_grid
 
-            points = self.pretraining_points[self.pretraining_steps[i]                                             :self.pretraining_steps[i+1]]
-            dirs = self.pretraining_dirs[self.pretraining_steps[i]                                         :self.pretraining_steps[i+1]]
+            points = self.pretraining_points[self.pretraining_steps[i]
+                :self.pretraining_steps[i+1]]
+            dirs = self.pretraining_dirs[self.pretraining_steps[i]
+                :self.pretraining_steps[i+1]]
             # dirs = self.pretraining_dirs[torch.randint(
             #     self.pretraining_dirs.shape[0], (steps[i+1] - steps[i],), device=self.device)]
             # dirs = torch.zeros_like(
@@ -211,10 +219,14 @@ class SealTrainer(OriginalTrainer):
             param_group['lr'] = lr
 
     # proxy the ground truth RGB from teacher model
-    def proxy_truth(self, data, all_ray: bool = True):
+    def proxy_truth(self, data, all_ray: bool = True, use_cache: bool = False):
         # if the model's bitfield is not hacked, do it before infering
         if not self.teacher_trainer.model.density_bitfield_hacked:
             self.teacher_trainer.model.hack_bitfield()
+
+        if use_cache and 'index' in data and np.all([data_index in self.proxy_train_gt_cache for data_index in data['index']]):
+            self.proxy_truth_from_cache(data)
+            return
 
         rays_o = data['rays_o']  # [B, N, 3]
         rays_d = data['rays_d']  # [B, N, 3]
@@ -240,11 +252,30 @@ class SealTrainer(OriginalTrainer):
             data['images'] = data['images'].view(*image_shape[:-1], -1)
             data['depth'] = data['depth'].view(*image_shape[:-1], -1)
 
+        if use_cache and 'index' in data:
+            for i, data_index in enumerate(data['index']):
+                self.proxy_train_gt_cache[data_index] = {
+                    'images': data['images'][i],
+                    'depth': data['depth'][i]
+                }
+
+    def proxy_truth_from_cache(self, data: dict):
+        assigned_keys = self.proxy_train_gt_cache[data['index'][0]].keys()
+        for k in assigned_keys:
+            data[k] = []
+        for i in data['index']:
+            for k, v in self.proxy_train_gt_cache[i].items():
+                data[k].append(v)
+                if isinstance(v, torch.Tensor):
+                    v.detach()
+        for k in assigned_keys:
+            data[k] = torch.stack(data[k])
+
     def train_step(self, data):
         # if self.teacher_trainer.model.density_bitfield_hacked:
         #     self.teacher_trainer.model.restore_bitfield()
         if self.proxy_train:
-            self.proxy_truth(data)
+            self.proxy_truth(data, use_cache=True)
         return super().train_step(data)
 
     def eval_step(self, data):
