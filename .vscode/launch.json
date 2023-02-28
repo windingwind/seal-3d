@@ -22,9 +22,20 @@
             "args": [
                 "data/nerf_synthetic/lego/",
                 "--workspace",
-                "exps/trial_nerf",
-                "-O"
-            ]
+                "exps/lego_nerf",
+                "-O",
+                "--bound",
+                "1.0",
+                "--scale",
+                "0.8",
+                "--dt_gamma",
+                "0",
+                "--iters",
+                "100000"
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "2"
+            }
         },
         {
             "name": "Python: nerf-chair",
@@ -36,9 +47,146 @@
             "args": [
                 "data/nerf_synthetic/chair/",
                 "--workspace",
-                "exps/nerf_chair_original",
-                "-O"
+                "exps/chair_nerf",
+                "-O",
+                "--bound",
+                "1.0",
+                "--scale",
+                "0.8",
+                "--dt_gamma",
+                "0"
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "1"
+            }
+        },
+        {
+            "name": "Python: nerf-hotdog",
+            "type": "python",
+            "request": "launch",
+            "program": "main_nerf.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "data/nerf_synthetic/hotdog/",
+                "--workspace",
+                "exps/hotdog_nerf",
+                "-O",
+                "--bound",
+                "1.0",
+                "--scale",
+                "0.67",
+                "--dt_gamma",
+                "0"
             ]
+        },
+        {
+            "name": "Python: nerf-flower",
+            "type": "python",
+            "request": "launch",
+            "program": "main_nerf.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "data/nerf_llff_data/flower/",
+                "--workspace",
+                "exps/flower_nerf",
+                "-O",
+                "--bound",
+                "15.0",
+                "--offset",
+                "0",
+                "0",
+                "15",
+                "--scale",
+                "0.15",
+                // "--dt_gamma",
+                // "0",
+                "--bg_radius",
+                "32"
+            ]
+        },
+        {
+            "name": "Python: nerf-family",
+            "type": "python",
+            "request": "launch",
+            "program": "main_nerf.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "data/TanksAndTemple/Family/",
+                "--workspace",
+                "exps/family_nerf",
+                "-O",
+                "--bound",
+                "1.0",
+                "--scale",
+                "0.33",
+                "--dt_gamma",
+                "0"
+            ]
+        },
+        {
+            "name": "Python: nerf-truck",
+            "type": "python",
+            "request": "launch",
+            "program": "main_nerf.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "data/TanksAndTemple/Truck/",
+                "--workspace",
+                "exps/truck_nerf",
+                "-O",
+                "--bound",
+                "1.0",
+                "--scale",
+                "0.33",
+                "--dt_gamma",
+                "0"
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "1"
+            }
+        },
+        {
+            "name": "Python: nerf-truck-brush",
+            "type": "python",
+            "request": "launch",
+            "program": "main_SealNeRF.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "data/TanksAndTemple/Truck/",
+                "--workspace",
+                "exps/truck_brush_rgb",
+                "-O",
+                "--iters",
+                "120000",
+                "--bound",
+                "1.0",
+                "--scale",
+                "0.33",
+                "--dt_gamma",
+                "0",
+                "--pretraining_epochs",
+                "150",
+                "--pretraining_point_step",
+                "0.002",
+                "--ckpt",
+                "exps/truck_nerf/checkpoints/ngp_ep0138.pth",
+                "--teacher_workspace",
+                "exps/truck_nerf",
+                "--seal_config",
+                "data/seal/truck_brush/",
+                "--eval_interval",
+                "50",
+                "--eval_count",
+                "1"
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "1"
+            }
         },
         {
             "name": "Python: sealnerf-lego-bbox",
@@ -50,22 +198,33 @@
             "args": [
                 "data/nerf_synthetic/lego/",
                 "--workspace",
-                "exps/seal_lego_bbox_real_pose",
+                "exps/lego_bbox",
                 "-O",
+                "--bound",
+                "1.0",
+                "--scale",
+                "0.8",
+                "--dt_gamma",
+                "0",
                 "--iters",
-                "35000",
-                // "--num_rays",
-                // "9216",
-                // "--custom_pose",
+                "130000",
+                "--pretraining_epochs",
+                "150",
+                "--pretraining_point_step",
+                "0.002",
                 "--ckpt",
-                "exps/nerf_lego/checkpoints/ngp_ep0300.pth",
+                "exps/lego_nerf/checkpoints/ngp_ep1000.pth",
                 "--teacher_workspace",
-                "exps/seal_lego_teacher",
+                "exps/lego_nerf",
                 "--seal_config",
-                "data/seal/lego_bbox/"
+                "data/seal/lego_bbox/",
+                "--eval_interval",
+                "100",
+                "--eval_count",
+                "10"
             ],
             "env": {
-                "CUDA_VISIBLE_DEVICES": "1",
+                "CUDA_VISIBLE_DEVICES": "2",
             }
         },
         {

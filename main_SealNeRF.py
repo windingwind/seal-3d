@@ -75,7 +75,7 @@ if __name__ == '__main__':
     
     # seal options
     # pretraining strategy
-    parser.add_argument('--pretraining_epochs', type=int, default=0,
+    parser.add_argument('--pretraining_epochs', type=int, default=150,
                         help="num epochs for local pretraining")
     parser.add_argument('--pretraining_point_step', type=float, default=0.001,
                         help="pretraining point sampling step")
@@ -111,6 +111,9 @@ if __name__ == '__main__':
                         default='workspace', help="teacher trainer workspace")
     parser.add_argument('--teacher_ckpt', type=str, default='latest')
     parser.add_argument('--seal_config', type=str, default='')
+
+    parser.add_argument('--eval_interval', type=int, default=50, help="eval_interval")
+    parser.add_argument('--eval_count', type=int, default=10, help="eval_count")
 
     opt = parser.parse_args()
 
@@ -167,7 +170,6 @@ if __name__ == '__main__':
         bg_radius=opt.bg_radius,
     )
     teacher_model.train(False)
-    # teacher_model.hack_grids()
 
     print(teacher_model)
 
@@ -217,7 +219,7 @@ if __name__ == '__main__':
                               pretraining_angle_step=opt.pretraining_angle_step,
                               pretraining_batch_size=opt.pretraining_batch_size,
                               device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, ema_decay=0.95,
-                              fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.ckpt, eval_interval=10, eval_count=10, max_keep_ckpt=65535)
+                              fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.ckpt, eval_interval=opt.eval_interval, eval_count=opt.eval_count, max_keep_ckpt=65535)
 
         if opt.custom_pose:
             train_dataset = SealDataset(
