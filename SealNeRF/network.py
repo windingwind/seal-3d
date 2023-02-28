@@ -11,7 +11,6 @@ from .renderer import SealNeRFTeacherRenderer, SealNeRFStudentRenderder, SealNeR
 # TODO: implement tcnn version
 class SelaNeRFNetwork(SealNeRFRenderer):
     def __init__(self,
-                 seal_config_path: str,
                  bound=1,
                  encoding="hashgrid",
                  encoding_dir="sphere_harmonics",
@@ -24,7 +23,7 @@ class SelaNeRFNetwork(SealNeRFRenderer):
                  num_layers_bg=2,
                  hidden_dim_bg=64,
                  **kwargs) -> None:
-        super().__init__(seal_config_path=seal_config_path, bound=bound, **kwargs)
+        super().__init__(bound=bound, **kwargs)
 
         # sigma network
         self.num_layers = num_layers
@@ -212,7 +211,6 @@ class SelaNeRFNetwork(SealNeRFRenderer):
 
 class SealNeRFTeacherNetwork(SealNeRFTeacherRenderer, SelaNeRFNetwork):
     def __init__(self,
-                 seal_config_path: str,
                  encoding="hashgrid",
                  encoding_dir="sphere_harmonics",
                  encoding_bg="hashgrid",
@@ -226,13 +224,12 @@ class SealNeRFTeacherNetwork(SealNeRFTeacherRenderer, SelaNeRFNetwork):
                  bound=1,
                  **kwargs,
                  ):
-        super().__init__(seal_config_path=seal_config_path, bound=bound, encoding=encoding, encoding_dir=encoding_dir, encoding_bg=encoding_bg, num_layers=num_layers, hidden_dim=hidden_dim,
+        super().__init__(bound=bound, encoding=encoding, encoding_dir=encoding_dir, encoding_bg=encoding_bg, num_layers=num_layers, hidden_dim=hidden_dim,
                          geo_feat_dim=geo_feat_dim, num_layers_color=num_layers_color, hidden_dim_color=hidden_dim_color, num_layers_bg=num_layers_bg, hidden_dim_bg=hidden_dim_bg, **kwargs)
 
 
 class SelaNeRFStudentNetwork(SealNeRFStudentRenderder, SelaNeRFNetwork):
     def __init__(self,
-                 seal_config_path: str,
                  encoding="hashgrid",
                  encoding_dir="sphere_harmonics",
                  encoding_bg="hashgrid",
@@ -246,5 +243,5 @@ class SelaNeRFStudentNetwork(SealNeRFStudentRenderder, SelaNeRFNetwork):
                  bound=1,
                  **kwargs,
                  ):
-        super().__init__(seal_config_path=seal_config_path, bound=bound, encoding=encoding, encoding_dir=encoding_dir, encoding_bg=encoding_bg, num_layers=num_layers, hidden_dim=hidden_dim,
+        super().__init__(bound=bound, encoding=encoding, encoding_dir=encoding_dir, encoding_bg=encoding_bg, num_layers=num_layers, hidden_dim=hidden_dim,
                          geo_feat_dim=geo_feat_dim, num_layers_color=num_layers_color, hidden_dim_color=hidden_dim_color, num_layers_bg=num_layers_bg, hidden_dim_bg=hidden_dim_bg, **kwargs)

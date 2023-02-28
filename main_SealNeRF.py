@@ -72,7 +72,7 @@ if __name__ == '__main__':
                         help="threshold for density grid to be occupied")
     parser.add_argument('--bg_radius', type=float, default=-1,
                         help="if positive, use a background model at sphere(bg_radius)")
-    
+
     # seal options
     # pretraining strategy
     parser.add_argument('--pretraining_epochs', type=int, default=150,
@@ -112,8 +112,10 @@ if __name__ == '__main__':
     parser.add_argument('--teacher_ckpt', type=str, default='latest')
     parser.add_argument('--seal_config', type=str, default='')
 
-    parser.add_argument('--eval_interval', type=int, default=50, help="eval_interval")
-    parser.add_argument('--eval_count', type=int, default=10, help="eval_count")
+    parser.add_argument('--eval_interval', type=int,
+                        default=50, help="eval_interval")
+    parser.add_argument('--eval_count', type=int,
+                        default=10, help="eval_count")
 
     opt = parser.parse_args()
 
@@ -147,7 +149,6 @@ if __name__ == '__main__':
     seed_everything(opt.seed)
 
     model = SelaNeRFStudentNetwork(
-        opt.seal_config,
         encoding="hashgrid",
         bound=opt.bound,
         cuda_ray=opt.cuda_ray,
@@ -156,11 +157,10 @@ if __name__ == '__main__':
         density_thresh=opt.density_thresh,
         bg_radius=opt.bg_radius,
     )
-
+    model.init_mapper(opt.seal_config)
     print(model)
 
     teacher_model = SealNeRFTeacherNetwork(
-        opt.seal_config,
         encoding="hashgrid",
         bound=opt.bound,
         cuda_ray=opt.cuda_ray,
@@ -169,8 +169,8 @@ if __name__ == '__main__':
         density_thresh=opt.density_thresh,
         bg_radius=opt.bg_radius,
     )
+    teacher_model.init_mapper(opt.seal_config)
     teacher_model.train(False)
-
     print(teacher_model)
 
     criterion = torch.nn.MSELoss(reduction='none')
@@ -225,7 +225,8 @@ if __name__ == '__main__':
             train_dataset = SealDataset(
                 opt, seal_mapper=model.seal_mapper, device=device, type='train')
             train_loader = train_dataset.dataloader()
-            trainer.log(f'[INFO] Dataset: center={train_dataset.look_at}&radius={train_dataset.radius}')
+            trainer.log(
+                f'[INFO] Dataset: center={train_dataset.look_at}&radius={train_dataset.radius}')
         else:
             train_loader = NeRFDataset(
                 opt, device=device, type='train').dataloader()
@@ -243,7 +244,8 @@ if __name__ == '__main__':
                     opt, device=device, type='val', downscale=1).dataloader()
 
             max_epoch = np.ceil(opt.iters / len(train_loader)).astype(np.int32)
-            trainer.log(f'[INFO] Proxy train/eval/test: {trainer.proxy_train}/{trainer.proxy_eval}/{trainer.proxy_test}')
+            trainer.log(
+                f'[INFO] Proxy train/eval/test: {trainer.proxy_train}/{trainer.proxy_eval}/{trainer.proxy_test}')
 
             trainer.train(train_loader, valid_loader, max_epoch)
 

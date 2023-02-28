@@ -73,6 +73,8 @@ def modify_hsv(rgb: torch.Tensor, modification: torch.Tensor):
 
 # TODO: fix color bugs and keep lightness
 # the original color is not correct makes the converted hsl value meaningless
+
+
 def modify_rgb(rgb: torch.Tensor, modification: torch.Tensor):
     N = rgb.shape[0]
     return modification.repeat(N).view(N, 3).to(rgb.device, rgb.dtype)
@@ -83,9 +85,19 @@ def modify_rgb(rgb: torch.Tensor, modification: torch.Tensor):
 
 
 class SealNeRFRenderer(NeRFRenderer):
-    def __init__(self, seal_config_path: str, bound=1, cuda_ray=False, density_scale=1, min_near=0.2, density_thresh=0.01, bg_radius=-1, **kwargs):
+    def __init__(self, bound=1, cuda_ray=False, density_scale=1, min_near=0.2, density_thresh=0.01, bg_radius=-1, **kwargs):
         super().__init__(bound=bound, cuda_ray=cuda_ray, density_scale=density_scale,
                          min_near=min_near, density_thresh=density_thresh, bg_radius=bg_radius)
+
+        # Setting bitfield preciously
+        # force_fill_bitfield_offsets: np.ndarray = self.force_fill_grid_indices % 8
+        # self.force_fill_bitfield_values = torch.rand(
+        #     [self.force_fill_bitfield_indices.shape[0], 1], dtype=torch.uint8, device=self.density_bitfield.device)
+        # self.force_fill_bitfield_values = 255
+        self.density_bitfield_origin = None
+        self.density_bitfield_hacked = False
+
+    def init_mapper(self, seal_config_path: str):
         self.seal_mapper = get_seal_mapper(seal_config_path)
         coords_min, coords_max = torch.floor(
             ((self.seal_mapper.map_data['force_fill_bound'] + self.bound) / self.bound / 2) * self.grid_size)
@@ -97,13 +109,6 @@ class SealNeRFRenderer(NeRFRenderer):
             coords).long()  # [N]
 
         self.force_fill_bitfield_indices = self.force_fill_grid_indices // 8
-        # Setting bitfield preciously
-        # force_fill_bitfield_offsets: np.ndarray = self.force_fill_grid_indices % 8
-        # self.force_fill_bitfield_values = torch.rand(
-        #     [self.force_fill_bitfield_indices.shape[0], 1], dtype=torch.uint8, device=self.density_bitfield.device)
-        # self.force_fill_bitfield_values = 255
-        self.density_bitfield_origin = None
-        self.density_bitfield_hacked = False
 
     def update_extra_state(self, decay=0.95, S=128):
         # self.force_fill_grids()
@@ -132,8 +137,8 @@ class SealNeRFRenderer(NeRFRenderer):
 
 
 class SealNeRFTeacherRenderer(SealNeRFRenderer):
-    def __init__(self, seal_config_path: str, bound=1, cuda_ray=False, density_scale=1, min_near=0.2, density_thresh=0.01, bg_radius=-1, **kwargs):
-        super().__init__(seal_config_path=seal_config_path, bound=bound, cuda_ray=cuda_ray,
+    def __init__(self, bound=1, cuda_ray=False, density_scale=1, min_near=0.2, density_thresh=0.01, bg_radius=-1, **kwargs):
+        super().__init__(bound=bound, cuda_ray=cuda_ray,
                          density_scale=density_scale, min_near=min_near, density_thresh=density_thresh, bg_radius=bg_radius)
 
     def run(self, rays_o, rays_d, num_steps=128, upsample_steps=128, bg_color=None, perturb=False, **kwargs):
@@ -352,9 +357,11 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
             sigmas = self.density_scale * sigmas
 
             if 'hsv' in self.seal_mapper.map_data:
-                rgbs[mapped_mask] = modify_hsv(rgbs[mapped_mask], self.seal_mapper.map_data['hsv'])
+                rgbs[mapped_mask] = modify_hsv(
+                    rgbs[mapped_mask], self.seal_mapper.map_data['hsv'])
             if 'rgb' in self.seal_mapper.map_data:
-                rgbs[mapped_mask] = modify_rgb(rgbs[mapped_mask], self.seal_mapper.map_data['rgb'])
+                rgbs[mapped_mask] = modify_rgb(
+                    rgbs[mapped_mask], self.seal_mapper.map_data['rgb'])
 
             #print(f'valid RGB query ratio: {mask.sum().item() / mask.shape[0]} (total = {mask.sum().item()})')
 
@@ -432,9 +439,11 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
                 sigmas = self.density_scale * sigmas
 
                 if 'hsv' in self.seal_mapper.map_data and len(mapped_mask):
-                    rgbs[mapped_mask] = modify_hsv(rgbs[mapped_mask], self.seal_mapper.map_data['hsv'])
+                    rgbs[mapped_mask] = modify_hsv(
+                        rgbs[mapped_mask], self.seal_mapper.map_data['hsv'])
                 if 'rgb' in self.seal_mapper.map_data:
-                    rgbs[mapped_mask] = modify_rgb(rgbs[mapped_mask], self.seal_mapper.map_data['rgb'])
+                    rgbs[mapped_mask] = modify_rgb(
+                        rgbs[mapped_mask], self.seal_mapper.map_data['rgb'])
                 raymarching.composite_rays(
                     n_alive, n_step, rays_alive, rays_t, sigmas, rgbs, deltas, weights_sum, depth, image, T_thresh)
 
@@ -456,6 +465,6 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
 
 
 class SealNeRFStudentRenderder(SealNeRFRenderer):
-    def __init__(self, seal_config_path: str, bound=1, cuda_ray=False, density_scale=1, min_near=0.2, density_thresh=0.01, bg_radius=-1, **kwargs):
-        super().__init__(seal_config_path=seal_config_path, bound=bound, cuda_ray=cuda_ray,
+    def __init__(self, bound=1, cuda_ray=False, density_scale=1, min_near=0.2, density_thresh=0.01, bg_radius=-1, **kwargs):
+        super().__init__(bound=bound, cuda_ray=cuda_ray,
                          density_scale=density_scale, min_near=min_near, density_thresh=density_thresh, bg_radius=bg_radius)
