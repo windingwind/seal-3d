@@ -18,6 +18,7 @@ def generate_default_editing_tool_config(type: str):
     elif type == 'brush':
         obj['normal'] = [0, 1, 0]
         obj['brushType'] = 'line'
+        obj['brushDepth'] = 0.3
         obj['brushPressure'] = 0.05
         obj['attenuationDistance'] = 0.02
         obj['attenuationMode'] = 'linear'
