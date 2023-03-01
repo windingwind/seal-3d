@@ -239,7 +239,7 @@ class Trainer(_Trainer):
     def save_checkpoint(self, name=None, full=False, best=False, remove_old=True):
 
         if name is None:
-            name = f'{self.name}_ep{self.epoch:04d}.pth'
+            name = f'{self.name}_ep{self.epoch:04d}'
 
         state = {
             'epoch': self.epoch,
