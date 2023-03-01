@@ -9,8 +9,8 @@ from nerf.utils import Trainer as OriginalTrainer
 # the trainer of seal nerf main model
 class SealTrainer(OriginalTrainer):
     def __init__(self, name, opt, student_model, teacher_trainer, proxy_train=True, proxy_test=False, proxy_eval=False, cache_gt=False, criterion=None, optimizer=None, ema_decay=None, lr_scheduler=None, metrics=..., local_rank=0, world_size=1, device=None, mute=False, fp16=False, eval_interval=1, eval_count=None, max_keep_ckpt=2, workspace='workspace', best_mode='min', use_loss_as_metric=True, report_metric_at_train=False, use_checkpoint="latest", use_tensorboardX=True, scheduler_update_every_step=False):
-        super().__init__(name, opt, student_model, criterion, optimizer, ema_decay, lr_scheduler, metrics, local_rank, world_size, device, mute, fp16, eval_interval, eval_count,
-                         max_keep_ckpt, workspace, best_mode, use_loss_as_metric, report_metric_at_train, use_checkpoint, use_tensorboardX, scheduler_update_every_step)
+        super().__init__(name, opt, student_model, criterion=criterion, optimizer=optimizer, ema_decay=ema_decay, lr_scheduler=lr_scheduler, metrics=metrics, local_rank=local_rank, world_size=world_size, device=device, mute=mute, fp16=fp16, eval_interval=eval_interval, eval_count=eval_count,
+                         max_keep_ckpt=max_keep_ckpt, workspace=workspace, best_mode=best_mode, use_loss_as_metric=use_loss_as_metric, report_metric_at_train=report_metric_at_train, use_checkpoint=use_checkpoint, use_tensorboardX=use_tensorboardX, scheduler_update_every_step=scheduler_update_every_step)
         # use teacher trainer instead of teacher model directly
         # to make sure it's properly initialized, e.g. device
         self.teacher_trainer = teacher_trainer
@@ -80,7 +80,8 @@ class SealTrainer(OriginalTrainer):
         # ray mask
         if self.cache_gt:
             N_poses = len(train_loader)
-            N_pixles = train_loader.extra_info['H']*train_loader.extra_info['W']
+            N_pixles = train_loader.extra_info['H'] * \
+                train_loader.extra_info['W']
             self.proxy_cache_mask = torch.zeros(
                 N_poses, N_pixles, dtype=torch.bool)
             self.proxy_cache_image = torch.zeros(
@@ -149,8 +150,8 @@ class SealTrainer(OriginalTrainer):
 
             self._density_grid = self.model.density_grid
 
-            points = self.pretraining_points[self.pretraining_steps[i]:self.pretraining_steps[i+1]]
-            dirs = self.pretraining_dirs[self.pretraining_steps[i]:self.pretraining_steps[i+1]]
+            points = self.pretraining_points[self.pretraining_steps[i]                                             :self.pretraining_steps[i+1]]
+            dirs = self.pretraining_dirs[self.pretraining_steps[i]                                         :self.pretraining_steps[i+1]]
             # dirs = self.pretraining_dirs[torch.randint(
             #     self.pretraining_dirs.shape[0], (steps[i+1] - steps[i],), device=self.device)]
             # dirs = torch.zeros_like(
