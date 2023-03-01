@@ -271,12 +271,12 @@ class SealBrushMapper(SealMapper):
         points_copy = points.clone()
         points_copy[map_mask] = points_mapped
 
-        trimesh.PointCloud(
-            points.cpu().numpy()).export('tmp/raw.obj')
-        trimesh.PointCloud(points_copy[map_mask].cpu().numpy()).export(
-            'tmp/mapped_to.obj')
-        trimesh.PointCloud(points[map_mask].cpu().numpy()).export(
-            'tmp/mapped_from.obj')
+        # trimesh.PointCloud(
+        #     points.cpu().numpy()).export('tmp/raw.obj')
+        # trimesh.PointCloud(points_copy[map_mask].cpu().numpy()).export(
+        #     'tmp/mapped_to.obj')
+        # trimesh.PointCloud(points[map_mask].cpu().numpy()).export(
+        #     'tmp/mapped_from.obj')
 
         return points_copy, dirs, map_mask
 
