@@ -6,7 +6,7 @@ from SealNeRF.provider import NeRFDataset, SealDataset
 from SealNeRF.gui import NeRFGUI
 from SealNeRF.trainer import get_trainer
 from SealNeRF.network import get_network
-from SealNeRF.utils import seed_everything, PSNRMeter, LPIPSMeter
+from nerf.utils import seed_everything, PSNRMeter, LPIPSMeter
 
 from functools import partial
 from loss import huber_loss
@@ -82,9 +82,13 @@ if __name__ == '__main__':
     # pretraining strategy
     parser.add_argument('--pretraining_epochs', type=int, default=150,
                         help="num epochs for local pretraining")
-    parser.add_argument('--pretraining_point_step', type=float, default=0.001,
+    parser.add_argument('--pretraining_local_point_step', type=float, default=0.001,
                         help="pretraining point sampling step")
-    parser.add_argument('--pretraining_angle_step', type=float, default=45,
+    parser.add_argument('--pretraining_local_angle_step', type=float, default=45,
+                        help="pretraining angle sampling step in degree")
+    parser.add_argument('--pretraining_global_point_step', type=float, default=0.05,
+                        help="pretraining point sampling step")
+    parser.add_argument('--pretraining_global_angle_step', type=float, default=45,
                         help="pretraining angle sampling step in degree")
     parser.add_argument('--pretraining_batch_size', type=int, default=6144000,
                         help="pretraining angle sampling step in degree")
@@ -221,11 +225,14 @@ if __name__ == '__main__':
         trainer = StudentTrainer('ngp', opt, model, teacher_trainer, proxy_eval=True,
                               device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, ema_decay=0.95,
                               fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.ckpt, eval_interval=opt.eval_interval, eval_count=opt.eval_count, max_keep_ckpt=65535)
-        trainer.init_pretraining(pretraining_epochs=opt.pretraining_epochs,
-                                 pretraining_point_step=opt.pretraining_point_step,
-                                 pretraining_angle_step=opt.pretraining_angle_step,
-                                 pretraining_batch_size=opt.pretraining_batch_size,
-                                 pretraining_lr=opt.pretraining_lr)
+
+        trainer.init_pretraining(epochs=opt.pretraining_epochs,
+                                 local_point_step=opt.pretraining_local_point_step,
+                                 local_angle_step=opt.pretraining_local_angle_step,
+                                 global_point_step=opt.pretraining_global_point_step,
+                                 global_angle_step=opt.pretraining_global_angle_step,
+                                 batch_size=opt.pretraining_batch_size,
+                                 lr=opt.pretraining_lr)
 
         if opt.custom_pose:
             train_dataset = SealDataset(

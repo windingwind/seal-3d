@@ -7,7 +7,7 @@ from tensoRF.network import NeRFNetwork as TensoRFNetwork
 def get_network(backbone: Union['ngp', 'tensoRF'], character: Union['teacher', 'student']):
     NeRFNetwork = network_constructor(
         backbone_refs[backbone], backbone_funcs[backbone])
-    return type('NeRFNetwork', (character_refs[character], NeRFNetwork), {})
+    return type(f'NeRFNetwork_{backbone}_{character}', (character_refs[character], NeRFNetwork), {})
 
 
 def network_constructor(ref, func_names: list):

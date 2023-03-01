@@ -11,7 +11,6 @@ import trimesh
 from trimesh.creation import uv_sphere
 from trimesh.proximity import ProximityQuery
 from skspatial.objects import Plane
-from scipy.spatial.transform import Rotation
 from sklearn.neighbors import NearestNeighbors
 import open3d as o3d
 
@@ -70,26 +69,6 @@ class SealMapper:
         shape_mask = points_in_mesh(points[bound_mask], self.map_triangles)
         bound_mask[bound_mask.clone()] = shape_mask
         return bound_mask
-
-    def sample_points(self, point_step=0.005, angle_step=45):
-        coords_min, coords_max = self.map_data['force_fill_bound']
-        X, Y, Z = torch.meshgrid(torch.arange(coords_min[0], coords_max[0], step=point_step),
-                                 torch.arange(
-                                     coords_min[1], coords_max[1], step=point_step),
-                                 torch.arange(coords_min[2], coords_max[2], step=point_step))
-        self.sampled_points = torch.stack(
-            [X, Y, Z], dim=-1).reshape(-1, 3).to(self.device)
-
-        r_x, r_y, r_z = torch.meshgrid(torch.arange(0, 360, step=angle_step),
-                                       torch.arange(0, 360, step=angle_step),
-                                       torch.arange(0, 360, step=angle_step))
-        eulers = torch.stack([r_x, r_y, r_z], dim=-1).reshape(-1, 3)
-        self.sampled_dirs = torch.from_numpy(Rotation.from_euler('xyz', eulers.numpy(
-        ), degrees=True).apply(np.array([1-1e-5, 0, 0]))).to(self.device)
-
-        # trimesh.PointCloud(
-        #     self.sampled_points.cpu().numpy()).export('tmp/sampled.obj')
-        return self.sampled_points, self.sampled_dirs
 
 
 # seal tool, transform and resize space inside a bbox

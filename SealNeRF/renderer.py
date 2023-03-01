@@ -8,7 +8,6 @@ import torch.nn.functional as F
 
 import raymarching
 from nerf.renderer import NeRFRenderer
-from .utils import custom_meshgrid
 from .seal_utils import get_seal_mapper
 from .color_utils import rgb2hsv_torch, hsv2rgb_torch, rgb2hsl_torch, hsl2rgb_torch
 
