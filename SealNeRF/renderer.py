@@ -460,6 +460,8 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
                     if 'rgb' in self.seal_mapper.map_data:
                         rgbs[mapped_mask] = modify_rgb(
                             rgbs[mapped_mask], self.seal_mapper.map_data['rgb'])
+                    if 'sigma' in self.seal_mapper.map_data:
+                        sigmas[mapped_mask] += self.seal_mapper.map_data
                 raymarching.composite_rays(
                     n_alive, n_step, rays_alive, rays_t, sigmas, rgbs, deltas, weights_sum, depth, image, T_thresh)
 
