@@ -23,10 +23,11 @@ class SealTrainer(OriginalTrainer):
         self.cache_gt = cache_gt
 
     # call this until seal_mapper is initialized
-    def init_pretraining(self, pretraining_epochs=0, pretraining_point_step=0.05, pretraining_angle_step=45, pretraining_batch_size=4096):
+    def init_pretraining(self, pretraining_epochs=0, pretraining_point_step=0.05, pretraining_angle_step=45, pretraining_batch_size=4096, pretraining_lr=0.07):
         # pretrain epochs before the real training starts
         self.pretraining_epochs = pretraining_epochs
         self.pretraining_batch_size = pretraining_batch_size
+        self.pretraining_lr = pretraining_lr
         if self.pretraining_epochs > 0:
             # sample points and dirs from seal mapper
             self.pretraining_points, self.pretraining_dirs = self.teacher_trainer.model.seal_mapper.sample_points(
@@ -117,7 +118,7 @@ class SealTrainer(OriginalTrainer):
     # pretrain one epoch. set silent=True to disable logs to speed up, as one epoch of pretraining can be very fast.
     def pretrain_one_epoch(self, silent=False):
         # hardcoded lr. not really necessary.
-        self.set_lr(0.07)
+        self.set_lr(self.pretraining_lr)
 
         if not self.model.density_bitfield_hacked:
             self.model.hack_bitfield()

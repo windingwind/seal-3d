@@ -83,6 +83,8 @@ if __name__ == '__main__':
                         help="pretraining angle sampling step in degree")
     parser.add_argument('--pretraining_batch_size', type=int, default=6144000,
                         help="pretraining angle sampling step in degree")
+    parser.add_argument('--pretraining_lr', type=float, default=0.07,
+                        help="pretraining learning rate")
     # wether to use generated camera poses rotating the seal_config's pose_center within pose_radius
     parser.add_argument('--custom_pose', action='store_true',
                         help="use generated poses")
@@ -219,7 +221,8 @@ if __name__ == '__main__':
         trainer.init_pretraining(pretraining_epochs=opt.pretraining_epochs,
                                  pretraining_point_step=opt.pretraining_point_step,
                                  pretraining_angle_step=opt.pretraining_angle_step,
-                                 pretraining_batch_size=opt.pretraining_batch_size,)
+                                 pretraining_batch_size=opt.pretraining_batch_size,
+                                 pretraining_lr=opt.pretraining_lr)
 
         if opt.custom_pose:
             train_dataset = SealDataset(
