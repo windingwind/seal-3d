@@ -217,6 +217,8 @@ class SealTrainer(OriginalTrainer):
             for i in range(len(module_list)):
                 module_list[i].requires_grad_(not freeze)
         freeze_module_list(self.model.color_net)
+        if self.model.bg_net is not None:
+            freeze_module_list(self.model.bg_net)
 
     # manually set learning rate to speedup pretraining. restore the original lr by passing `lr=-1`
     def set_lr(self, lr: float):
