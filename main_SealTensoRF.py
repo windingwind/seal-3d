@@ -1,16 +1,20 @@
 import torch
+import numpy as np
 import argparse
 
 from SealNeRF.provider import NeRFDataset, SealDataset
 from SealNeRF.gui import NeRFGUI
-from SealNeRF.trainer_tensorf import SealTrainer, OriginalTrainer
+from SealNeRF.trainer import get_trainer
+from SealNeRF.network import get_network
 from SealNeRF.utils import seed_everything, PSNRMeter, LPIPSMeter
-
-from tensoRF.utils import *
 
 # torch.autograd.set_detect_anomaly(True)
 
 if __name__ == '__main__':
+    TeacherTrainer = get_trainer('tensoRF', 'teacher')
+    StudentTrainer = get_trainer('tensoRF', 'student')
+    TeacherNetwork = get_network('tensoRF', 'teacher')
+    StudentNetwork = get_network('tensoRF', 'student')
 
     parser = argparse.ArgumentParser()
     parser.add_argument('path', type=str)
@@ -143,9 +147,7 @@ if __name__ == '__main__':
     # else:
     #     from tensoRF.network import NeRFNetwork
 
-    from SealNeRF.network_tensorf import SealNeRFTeacherNetwork, SelaNeRFStudentNetwork
-
-    model = SelaNeRFStudentNetwork(
+    model = StudentNetwork(
         resolution=[opt.resolution0] * 3,
         bound=opt.bound,
         cuda_ray=opt.cuda_ray,
@@ -157,7 +159,7 @@ if __name__ == '__main__':
     model.init_mapper(opt.seal_config)
     print(model)
 
-    teacher_model = SealNeRFTeacherNetwork(
+    teacher_model = TeacherNetwork(
         resolution=[opt.resolution0] * 3,
         bound=opt.bound,
         cuda_ray=opt.cuda_ray,
@@ -176,7 +178,7 @@ if __name__ == '__main__':
 
     if opt.test:
 
-        trainer = OriginalTrainer('ngp', opt, model, device=device, workspace=opt.workspace,
+        trainer = TeacherTrainer('ngp', opt, model, device=device, workspace=opt.workspace,
                                   criterion=criterion, fp16=opt.fp16, metrics=[PSNRMeter()], use_checkpoint=opt.ckpt)
 
         if opt.gui:
@@ -201,13 +203,13 @@ if __name__ == '__main__':
             model.get_params(opt.lr0, opt.lr1), betas=(0.9, 0.99), eps=1e-15)
 
         # decay to 0.1 * init_lr at last iter step
-        def scheduler(optimizer): return optim.lr_scheduler.LambdaLR(
+        def scheduler(optimizer): return torch.optim.lr_scheduler.LambdaLR(
             optimizer, lambda iter: 0.1 ** min(iter / opt.iters, 1))
 
-        teacher_trainer = OriginalTrainer('tensoRF', opt, teacher_model, device=device, workspace=opt.teacher_workspace, optimizer=optimizer, criterion=criterion,
+        teacher_trainer = TeacherTrainer('tensoRF', opt, teacher_model, device=device, workspace=opt.teacher_workspace, optimizer=optimizer, criterion=criterion,
                                           ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=[PSNRMeter()], use_checkpoint=opt.teacher_ckpt, eval_interval=50)
 
-        trainer = SealTrainer('tensoRF', opt, model, teacher_trainer, proxy_eval=True,
+        trainer = StudentTrainer('tensoRF', opt, model, teacher_trainer, proxy_eval=True,
                               device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, ema_decay=None, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=[PSNRMeter()], use_checkpoint=opt.ckpt, eval_interval=opt.eval_interval, eval_count=opt.eval_count, max_keep_ckpt=65535)
 
         trainer.init_pretraining(pretraining_epochs=opt.pretraining_epochs,

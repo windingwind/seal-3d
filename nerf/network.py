@@ -22,7 +22,7 @@ class NeRFNetwork(NeRFRenderer):
                  bound=1,
                  **kwargs,
                  ):
-        super().__init__(bound, **kwargs)
+        super(self._self, self).__init__(bound, **kwargs)
 
         # sigma network
         self.num_layers = num_layers
@@ -204,3 +204,5 @@ class NeRFNetwork(NeRFRenderer):
             params.append({'params': self.bg_net.parameters(), 'lr': lr})
         
         return params
+
+NeRFNetwork._self = NeRFNetwork

@@ -4,7 +4,8 @@ import argparse
 
 from SealNeRF.provider import NeRFDataset, SealDataset
 from SealNeRF.gui import NeRFGUI
-from SealNeRF.trainer_ngp import SealTrainer, OriginalTrainer
+from SealNeRF.trainer import get_trainer
+from SealNeRF.network import get_network
 from SealNeRF.utils import seed_everything, PSNRMeter, LPIPSMeter
 
 from functools import partial
@@ -13,6 +14,10 @@ from loss import huber_loss
 # torch.autograd.set_detect_anomaly(True)
 
 if __name__ == '__main__':
+    TeacherTrainer = get_trainer('ngp', 'teacher')
+    StudentTrainer = get_trainer('ngp', 'student')
+    TeacherNetwork = get_network('ngp', 'teacher')
+    StudentNetwork = get_network('ngp', 'student')
 
     parser = argparse.ArgumentParser()
     parser.add_argument('path', type=str)
@@ -144,13 +149,11 @@ if __name__ == '__main__':
     #     # from nerf.network import NeRFNetwork
     #     from SealNeRF.network import SelaNeRFStudentNetwork
 
-    from SealNeRF.network_ngp import SealNeRFTeacherNetwork, SelaNeRFStudentNetwork
-
     print(opt)
 
     seed_everything(opt.seed)
 
-    model = SelaNeRFStudentNetwork(
+    model = StudentNetwork(
         encoding="hashgrid",
         bound=opt.bound,
         cuda_ray=opt.cuda_ray,
@@ -162,7 +165,7 @@ if __name__ == '__main__':
     model.init_mapper(opt.seal_config)
     print(model)
 
-    teacher_model = SealNeRFTeacherNetwork(
+    teacher_model = TeacherNetwork(
         encoding="hashgrid",
         bound=opt.bound,
         cuda_ray=opt.cuda_ray,
@@ -184,7 +187,7 @@ if __name__ == '__main__':
     if opt.test:
 
         metrics = [PSNRMeter(), LPIPSMeter(device=device)]
-        trainer = OriginalTrainer('ngp', opt, model, device=device, workspace=opt.workspace,
+        trainer = TeacherTrainer('ngp', opt, model, device=device, workspace=opt.workspace,
                                   criterion=criterion, fp16=opt.fp16, metrics=metrics, use_checkpoint=opt.ckpt)
 
         if opt.gui:
@@ -213,9 +216,9 @@ if __name__ == '__main__':
             optimizer, lambda iter: 0.1 ** min(iter / opt.iters, 1))
 
         metrics = [PSNRMeter(), LPIPSMeter(device=device)]
-        teacher_trainer = OriginalTrainer('ngp', opt, teacher_model, device=device, workspace=opt.teacher_workspace, optimizer=optimizer, criterion=criterion,
+        teacher_trainer = TeacherTrainer('ngp', opt, teacher_model, device=device, workspace=opt.teacher_workspace, optimizer=optimizer, criterion=criterion,
                                           ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.teacher_ckpt, eval_interval=50)
-        trainer = SealTrainer('ngp', opt, model, teacher_trainer, proxy_eval=True,
+        trainer = StudentTrainer('ngp', opt, model, teacher_trainer, proxy_eval=True,
                               device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, ema_decay=0.95,
                               fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.ckpt, eval_interval=opt.eval_interval, eval_count=opt.eval_count, max_keep_ckpt=65535)
         trainer.init_pretraining(pretraining_epochs=opt.pretraining_epochs,

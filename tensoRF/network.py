@@ -25,7 +25,7 @@ class NeRFNetwork(NeRFRenderer):
                  bound=1,
                  **kwargs
                  ):
-        super().__init__(bound, **kwargs)
+        super(self._self, self).__init__(bound, **kwargs)
 
         self.resolution = resolution
 
@@ -332,4 +332,5 @@ class NeRFNetwork(NeRFRenderer):
             params.append({'params': self.bg_mat, 'lr': lr1})
             params.append({'params': self.bg_net.parameters(), 'lr': lr2})
         return params
-        
+
+NeRFNetwork._self = NeRFNetwork
