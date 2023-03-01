@@ -290,7 +290,6 @@ class Trainer(object):
                  mute=False, # whether to mute all print
                  fp16=False, # amp optimize level
                  eval_interval=1, # eval once every $ epoch
-                 eval_count=None, # eval $ views
                  max_keep_ckpt=2, # max num of saved ckpts in disk
                  workspace='workspace', # workspace to save logs & ckpts
                  best_mode='min', # the smaller/larger result, the better
@@ -299,6 +298,7 @@ class Trainer(object):
                  use_checkpoint="latest", # which ckpt to use at init time
                  use_tensorboardX=True, # whether to use tensorboard for logging
                  scheduler_update_every_step=False, # whether to call scheduler.step() after every train step
+                 eval_count=None, # eval $ views
                  ):
         
         self.name = name

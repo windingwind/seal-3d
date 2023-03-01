@@ -93,7 +93,6 @@ class SealMapper:
 
 
 # seal tool, transform and resize space inside a bbox
-# TODO: use oriented bbox
 # seal_config format:
 # type: bbox
 # raw: [N,3] points

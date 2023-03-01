@@ -115,7 +115,7 @@ if __name__ == '__main__':
             
             trainer.test(test_loader, write_video=True) # test and save video
 
-            #trainer.save_mesh(resolution=256, threshold=0.1)
+            trainer.save_mesh(resolution=256, threshold=10)
     
     else:
 
@@ -151,4 +151,4 @@ if __name__ == '__main__':
             
             trainer.test(test_loader, write_video=True) # test and save video
 
-            #trainer.save_mesh(resolution=256, threshold=0.1)
+            trainer.save_mesh(resolution=256, threshold=10)
