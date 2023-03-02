@@ -261,13 +261,16 @@ class SealBrushMapper(SealMapper):
         brush_border_distance = points_mesh_distance(
             inner_points, self.map_meshes, self.map_triangles)
 
-        points_mapped = inner_points - self.map_data['normal_expand']
         mode = self.map_data['attenuation_mode']
         if mode == 'linear':
+            points_mapped = inner_points - self.map_data['normal_expand']
             # N_points, 3
             points_compensation = (torch.abs(self.map_data['attenuation_distance'] - brush_border_distance) /
                                    self.map_data['attenuation_distance'])[None].T @ self.map_data['normal_expand'][None]
             points_mapped += points_compensation
+        elif mode == 'dry':
+            # for dry brush, no space mapping is applied.
+            points_mapped = inner_points
         elif mode == 'ease-in':
             # TODO: implement this
             raise NotImplementedError()
@@ -543,7 +546,9 @@ def modify_hsv(rgb: torch.Tensor, modification: torch.Tensor):
     rgb -> hsv + mod -> rgb
     """
     N = rgb.shape[0]
-    hsv = rgb2hsv_torch(rgb.view(1, 3, N))
+    if N == 0:
+        return rgb
+    hsv = rgb2hsv_torch(rgb.view(N, 3, 1))
     hsv[:, 0, :] += modification[0]
     hsv[:, 1, :] += modification[1]
     hsv[:, 2, :] += modification[2]
@@ -556,8 +561,12 @@ def modify_rgb(rgb: torch.Tensor, modification: torch.Tensor):
     the original color is not correct makes the converted hsl value meaningless
     """
     N = rgb.shape[0]
-    return modification.repeat(N).view(N, 3).to(rgb.device, rgb.dtype)
-    # hsl = rgb2hsl_torch(rgb.view(1, 3, N))
-    # hsl_modification = rgb2hsl_torch(modification.view(1, 3, 1)).view(3).to(rgb.device, rgb.dtype)
-    # hsl[:, 2, :] = hsl_modification[2]
-    # return hsl2rgb_torch(hsl).view(N, 3)
+    if N == 0:
+        return rgb
+    # return modification.repeat(N).view(N, 3).to(rgb.device, rgb.dtype)
+    hsl = rgb2hsl_torch(rgb.view(N, 3, 1))
+    hsl_modification = rgb2hsl_torch(modification.view(1, 3, 1)).view(3).to(rgb.device, rgb.dtype)
+    hsl[:, 0, :] = hsl_modification[0]
+    hsl[:, 1, :] = hsl_modification[1]
+    ret = hsl2rgb_torch(hsl).view(N, 3)
+    return ret
