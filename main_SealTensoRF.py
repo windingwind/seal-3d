@@ -103,10 +103,19 @@ if __name__ == '__main__':
     # pretraining strategy
     parser.add_argument('--pretraining_epochs', type=int, default=150,
                         help="num epochs for local pretraining")
+    # local
     parser.add_argument('--pretraining_local_point_step', type=float, default=0.001,
                         help="pretraining point sampling step")
     parser.add_argument('--pretraining_local_angle_step', type=float, default=45,
                         help="pretraining angle sampling step in degree")
+    # surrounding
+    parser.add_argument('--pretraining_surrounding_point_step', type=float, default=0.01,
+                        help="pretraining point sampling step")
+    parser.add_argument('--pretraining_surrounding_angle_step', type=float, default=45,
+                        help="pretraining angle sampling step in degree")
+    parser.add_argument('--pretraining_surrounding_bounds_extend', type=float, default=0.2,
+                        help="pretraining bounds extend")
+    # global
     parser.add_argument('--pretraining_global_point_step', type=float, default=0.05,
                         help="pretraining point sampling step")
     parser.add_argument('--pretraining_global_angle_step', type=float, default=45,
@@ -219,6 +228,9 @@ if __name__ == '__main__':
         trainer.init_pretraining(epochs=opt.pretraining_epochs,
                                  local_point_step=opt.pretraining_local_point_step,
                                  local_angle_step=opt.pretraining_local_angle_step,
+                                 surrounding_point_step=opt.pretraining_surrounding_point_step,
+                                 surrounding_angle_step=opt.pretraining_surrounding_angle_step,
+                                 surrounding_bounds_extend=opt.pretraining_surrounding_bounds_extend,
                                  global_point_step=opt.pretraining_global_point_step,
                                  global_angle_step=opt.pretraining_global_angle_step,
                                  batch_size=opt.pretraining_batch_size,

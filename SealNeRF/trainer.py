@@ -69,8 +69,13 @@ def init(self: trainer_types, name, opt, student_model, teacher_trainer, proxy_t
     self.cache_gt = cache_gt
 
 
-# call this until seal_mapper is initialized
-def init_pretraining(self: trainer_types, epochs=0, local_point_step=0.01, local_angle_step=45, global_point_step=0.05, global_angle_step=45, batch_size=4096, lr=0.07):
+def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
+                     local_point_step=0.001, local_angle_step=45,
+                     surrounding_point_step=0.01, surrounding_angle_step=45, surrounding_bounds_extend=0.2,
+                     global_point_step=0.05, global_angle_step=45):
+    """
+    call this until seal_mapper is initialized
+    """
     # pretrain epochs before the real training starts
     self.pretraining_epochs = epochs
     self.pretraining_batch_size = batch_size
@@ -79,84 +84,127 @@ def init_pretraining(self: trainer_types, epochs=0, local_point_step=0.01, local
         # simply use L1 to compute pretraining loss
         self.pretraining_criterion = torch.nn.L1Loss().to(self.device)
         # sample points and dirs from seal mapper
-        self.pretraining_data = {
-            'global': {},
-            'local': {}
-        }
+        self.pretraining_data = {}
 
         # prepare local data and gt
-        local_bounds = self.teacher_trainer.model.seal_mapper.map_data['force_fill_bound']
-        local_points, local_dirs = sample_points(
-            local_bounds, local_point_step, local_angle_step)
-        local_points = local_points.to(
-            self.device, torch.float32)
-        local_dirs = local_dirs.to(
-            self.device, torch.float32)
+        if local_point_step > 0:
+            local_bounds = self.teacher_trainer.model.seal_mapper.map_data['force_fill_bound']
+            local_points, local_dirs = sample_points(
+                local_bounds, local_point_step, local_angle_step)
+            local_points = local_points.to(
+                self.device, torch.float32)
+            local_dirs = local_dirs.to(
+                self.device, torch.float32)
 
-        # map sampled points
-        mapped_points, mapped_dirs, mapped_mask = self.teacher_trainer.model.seal_mapper.map_to_origin(local_points, torch.zeros_like(
-            local_points, device=self.device, dtype=torch.float32) + torch.tensor([1, 0, 0], device=self.device, dtype=torch.float32))
-        # filter sampled points. only store masked ones
-        local_points = local_points[mapped_mask]
-        N_local_points = local_points.shape[0]
-        # prepare sampled dirs so we won't need to do randomly sampling in the tringing time
-        local_dirs = local_dirs[torch.randint(
-            local_dirs.shape[0], (N_local_points,), device=self.device)]
+            # map sampled points
+            mapped_points, mapped_dirs, mapped_mask = self.teacher_trainer.model.seal_mapper.map_to_origin(local_points, torch.zeros_like(
+                local_points, device=self.device, dtype=torch.float32) + torch.tensor([1, 0, 0], device=self.device, dtype=torch.float32))
+            # filter sampled points. only store masked ones
+            local_points = local_points[mapped_mask]
+            N_local_points = local_points.shape[0]
+            # prepare sampled dirs so we won't need to do randomly sampling in the tringing time
+            local_dirs = local_dirs[torch.randint(
+                local_dirs.shape[0], (N_local_points,), device=self.device)]
 
-        # infer gt sigma & color from teacher model and store them
-        mapped_points = mapped_points[mapped_mask]
-        mapped_dirs = mapped_dirs[mapped_mask]
-        gt_sigma, gt_color = self.teacher_trainer.model(
-            mapped_points, mapped_dirs)
+            # infer gt sigma & color from teacher model and store them
+            mapped_points = mapped_points[mapped_mask]
+            mapped_dirs = mapped_dirs[mapped_mask]
+            gt_sigma, gt_color = self.teacher_trainer.model(
+                mapped_points, mapped_dirs)
 
-        # prepare pretraining steps to avoid cuda oom
-        local_steps = list(
-            range(0, N_local_points, self.pretraining_batch_size))
-        if local_steps[-1] != N_local_points:
-            local_steps.append(N_local_points)
+            # map gt color
+            gt_color = self.teacher_trainer.model.seal_mapper.map_color(gt_color)
 
-        self.pretraining_data['local'] = {
-            'points': local_points,
-            'dirs': local_dirs,
-            'sigma':  gt_sigma.detach(),
-            'color': gt_color.detach(),
-            'steps': local_steps
-        }
+            # prepare pretraining steps to avoid cuda oom
+            local_steps = list(
+                range(0, N_local_points, self.pretraining_batch_size))
+            if local_steps[-1] != N_local_points:
+                local_steps.append(N_local_points)
+
+            self.pretraining_data['local'] = {
+                'points': local_points,
+                'dirs': local_dirs,
+                'sigma':  gt_sigma.detach(),
+                'color': gt_color.detach(),
+                'steps': local_steps
+            }
+
+        # prepare surrounding data and gt
+        if surrounding_point_step > 0:
+            surrounding_bounds = self.teacher_trainer.model.seal_mapper.map_data['force_fill_bound']
+            surrounding_bounds[0] -= surrounding_bounds_extend
+            surrounding_bounds[0] = torch.max(surrounding_bounds[0], self.model.aabb_train[:3])
+            surrounding_bounds[1] += surrounding_bounds_extend
+            surrounding_bounds[1] = torch.min(surrounding_bounds[1], self.model.aabb_train[3:])
+            surrounding_points, surrounding_dirs = sample_points(
+                surrounding_bounds, surrounding_point_step, surrounding_angle_step)
+            surrounding_points = surrounding_points.to(
+                self.device, torch.float32)
+            surrounding_dirs = surrounding_dirs.to(
+                self.device, torch.float32)
+
+            # map sampled points
+            _, _, mapped_mask = self.teacher_trainer.model.seal_mapper.map_to_origin(surrounding_points, torch.zeros_like(
+                surrounding_points, device=self.device, dtype=torch.float32) + torch.tensor([1, 0, 0], device=self.device, dtype=torch.float32))
+            # filter sampled points. only store unmasked ones
+            surrounding_points = surrounding_points[~mapped_mask]
+            N_surrounding_points = surrounding_points.shape[0]
+            # prepare sampled dirs so we won't need to do randomly sampling in the tringing time
+            surrounding_dirs = surrounding_dirs[torch.randint(
+                surrounding_dirs.shape[0], (N_surrounding_points,), device=self.device)]
+
+            gt_sigma, gt_color = self.teacher_trainer.model(
+                surrounding_points, surrounding_dirs)
+
+            # prepare pretraining steps to avoid cuda oom
+            surrounding_steps = list(
+                range(0, N_surrounding_points, self.pretraining_batch_size))
+            if surrounding_steps[-1] != N_surrounding_points:
+                surrounding_steps.append(N_surrounding_points)
+
+            self.pretraining_data['surrounding'] = {
+                'points': surrounding_points,
+                'dirs': surrounding_dirs,
+                'sigma':  gt_sigma.detach(),
+                'color': gt_color.detach(),
+                'steps': surrounding_steps
+            }
 
         # prepare global data and gt
-        global_bounds = self.model.aabb_train.view(2, 3)
-        global_points, global_dirs = sample_points(
-            global_bounds, global_point_step, global_angle_step)
-        global_points = global_points.to(
-            self.device, torch.float32)
-        global_dirs = global_dirs.to(
-            self.device, torch.float32)
+        if global_point_step > 0:
+            global_bounds = self.model.aabb_train.view(2, 3)
+            global_points, global_dirs = sample_points(
+                global_bounds, global_point_step, global_angle_step)
+            global_points = global_points.to(
+                self.device, torch.float32)
+            global_dirs = global_dirs.to(
+                self.device, torch.float32)
 
-        _, _, mapped_mask = self.teacher_trainer.model.seal_mapper.map_to_origin(global_points, torch.zeros_like(
-            global_points, device=self.device, dtype=torch.float32) + torch.tensor([1, 0, 0], device=self.device, dtype=torch.float32))
+            _, _, mapped_mask = self.teacher_trainer.model.seal_mapper.map_to_origin(global_points, torch.zeros_like(
+                global_points, device=self.device, dtype=torch.float32) + torch.tensor([1, 0, 0], device=self.device, dtype=torch.float32))
 
-        # keep non-edited points
-        global_points = global_points[~mapped_mask]
-        N_global_points = global_points.shape[0]
-        global_dirs = global_dirs[torch.randint(
-            global_dirs.shape[0], (N_global_points,), device=self.device)]
+            # keep non-edited points
+            global_points = global_points[~mapped_mask]
+            N_global_points = global_points.shape[0]
+            global_dirs = global_dirs[torch.randint(
+                global_dirs.shape[0], (N_global_points,), device=self.device)]
 
-        gt_sigma, gt_color = self.teacher_trainer.model(
-            global_points, global_dirs)
+            gt_sigma, gt_color = self.teacher_trainer.model(
+                global_points, global_dirs)
 
-        # prepare pretraining steps to avoid cuda oom
-        global_steps = list(
-            range(0, N_global_points, self.pretraining_batch_size))
-        if global_steps[-1] != N_global_points:
-            global_steps.append(N_global_points)
+            # prepare pretraining steps to avoid cuda oom
+            global_steps = list(
+                range(0, N_global_points, self.pretraining_batch_size))
+            if global_steps[-1] != N_global_points:
+                global_steps.append(N_global_points)
 
-        self.pretraining_data['global'] = {
-            'points': global_points,
-            'dirs': global_dirs,
-            'sigma':  gt_sigma.detach(),
-            'color': gt_color.detach(),
-            'steps': global_steps
-        }
+            self.pretraining_data['global'] = {
+                'points': global_points,
+                'dirs': global_dirs,
+                'sigma':  gt_sigma.detach(),
+                'color': gt_color.detach(),
+                'steps': global_steps
+            }
 
 
 def train(self: trainer_types, train_loader, valid_loader, max_epochs):
@@ -210,10 +258,11 @@ def train(self: trainer_types, train_loader, valid_loader, max_epochs):
     if self.use_tensorboardX and self.local_rank == 0:
         self.writer.close()
 
-# pretrain one epoch. set silent=True to disable logs to speed up, as one epoch of pretraining can be very fast.
-
 
 def pretrain_one_epoch(self: trainer_types, silent=False):
+    """
+    pretrain one epoch. set silent=True to disable logs to speed up
+    """
     # hardcoded lr. not really necessary.
     self.set_lr(self.pretraining_lr)
 
@@ -234,8 +283,8 @@ def pretrain_one_epoch(self: trainer_types, silent=False):
     self.freeze_mlp()
 
     self.local_step = 0
-    self.pretrain_part('global', silent)
-    self.pretrain_part('local', silent)
+    for part_key in self.pretraining_data.keys():
+        self.pretrain_part(part_key, silent)
 
     if self.ema is not None:
         self.ema.update()
@@ -302,10 +351,11 @@ def pretrain_part(self: trainer_types, source_type: str, silent: bool = False):
     if not silent and self.local_rank == 0:
         pbar.close()
 
-# use both sigma and color to quickly reconstruct modified space
-
 
 def pretrain_step(self: trainer_types, data):
+    """
+    use both sigma and color to quickly reconstruct modified space
+    """
     # pred_sigma = self.model.density(data['points'])['sigma']
     source = self.pretraining_data[data['source_type']]
     pred_sigma, pred_color = self.model(data['points'], data['dirs'])
@@ -314,27 +364,33 @@ def pretrain_step(self: trainer_types, data):
     color_loss = self.pretraining_criterion(
         pred_color, source['color'][data['indices'][0]:data['indices'][1]])
     # hardcoded weight. not really necessary as it is just a pretraining.
-    loss = color_loss * 100 + sigma_loss
+    loss = color_loss * 1000 + sigma_loss
     return loss
-
-# freeze all MLPs or unfreeze them by passing `freeze=False`
 
 
 def freeze_mlp(self: trainer_types, freeze: bool = True):
+    """
+    freeze all MLPs or unfreeze them by passing `freeze=False`
+    """
     if self._backbone is BackBoneTypes.TensoRF:
+        # freeze_module(self.model.color_net, freeze)
+        # freeze_module(self.model.sigma_mat, freeze)
+        # freeze_module(self.model.sigma_vec, freeze)
+        # freeze_module(self.model.color_mat, freeze)
+        # freeze_module(self.model.color_vec, freeze)
+        # freeze_module(self.model.basis_mat, freeze)
         return
     elif self._backbone is BackBoneTypes.NGP:
-        if hasattr(self.model, 'sigma_net'):
-            freeze_module_list(self.model.sigma_net, freeze)
-        if hasattr(self.model, 'color_net'):
-            freeze_module_list(self.model.color_net, freeze)
+        freeze_module(self.model.sigma_net, freeze)
+        freeze_module(self.model.color_net, freeze)
         if hasattr(self.model, 'bg_net') and self.model.bg_net is not None:
-            freeze_module_list(self.model.bg_net, freeze)
-
-# manually set learning rate to speedup pretraining. restore the original lr by passing `lr=-1`
+            freeze_module(self.model.bg_net, freeze)
 
 
 def set_lr(self: trainer_types, lr: float):
+    """
+    manually set learning rate to speedup pretraining. restore the original lr by passing `lr=-1`
+    """
     if lr < 0:
         if not hasattr(self, '_cached_lr') or self._cached_lr is None:
             return
@@ -345,10 +401,11 @@ def set_lr(self: trainer_types, lr: float):
     for param_group in self.optimizer.param_groups:
         param_group['lr'] = lr
 
-# proxy the ground truth RGB from teacher model
-
 
 def proxy_truth(self: trainer_types, data, all_ray: bool = True, use_cache: bool = False):
+    """
+    proxy the ground truth RGB from teacher model
+    """
     # if the model's bitfield is not hacked, do it before infering
     if not self.teacher_trainer.model.density_bitfield_hacked:
         self.teacher_trainer.model.hack_bitfield()
@@ -422,8 +479,6 @@ def test_step(self: trainer_types, data, bg_color=None, perturb=False):
         self.proxy_truth(data)
     return super(self._self, self).test_step(data, bg_color, perturb)
 
-# this is not a class method
-
 
 def sample_points(bounds, point_step=0.005, angle_step=45):
     coords_min, coords_max = bounds
@@ -445,7 +500,11 @@ def sample_points(bounds, point_step=0.005, angle_step=45):
     #     self.sampled_points.cpu().numpy()).export('tmp/sampled.obj')
     return sampled_points, sampled_dirs
 
-def freeze_module_list(module_list: torch.nn.ModuleList, freeze: bool):
-    module_list.training = not freeze
-    for i in range(len(module_list)):
-        module_list[i].requires_grad_(not freeze)
+
+def freeze_module(module: Union[torch.nn.ParameterList, torch.nn.ModuleList, torch.nn.Module], freeze: bool):
+    module.training = not freeze
+    if isinstance(module, (torch.nn.ParameterList, torch.nn.ModuleList)):
+        for i in range(len(module)):
+            module[i].requires_grad_(not freeze)
+    elif isinstance(module, torch.nn.Module):
+        module.requires_grad_(not freeze)
