@@ -13,7 +13,7 @@
             "justMyCode": true
         },
         {
-            "name": "Python: nerf-lego",
+            "name": "lego-ngp",
             "type": "python",
             "request": "launch",
             "program": "main_nerf.py",
@@ -22,7 +22,7 @@
             "args": [
                 "data/nerf_synthetic/lego/",
                 "--workspace",
-                "exps/lego_nerf",
+                "exps/lego_ngp",
                 "-O",
                 "--bound",
                 "1.0",
@@ -34,11 +34,11 @@
                 "100000"
             ],
             "env": {
-                "CUDA_VISIBLE_DEVICES": "2"
+                "CUDA_VISIBLE_DEVICES": "0"
             }
         },
         {
-            "name": "Python: nerf-chair",
+            "name": "chair-ngp",
             "type": "python",
             "request": "launch",
             "program": "main_nerf.py",
@@ -47,7 +47,7 @@
             "args": [
                 "data/nerf_synthetic/chair/",
                 "--workspace",
-                "exps/chair_nerf",
+                "exps/chair_ngp",
                 "-O",
                 "--bound",
                 "1.0",
@@ -57,11 +57,11 @@
                 "0"
             ],
             "env": {
-                "CUDA_VISIBLE_DEVICES": "1"
+                "CUDA_VISIBLE_DEVICES": "0"
             }
         },
         {
-            "name": "Python: nerf-hotdog",
+            "name": "hotdog-ngp",
             "type": "python",
             "request": "launch",
             "program": "main_nerf.py",
@@ -70,7 +70,7 @@
             "args": [
                 "data/nerf_synthetic/hotdog/",
                 "--workspace",
-                "exps/hotdog_nerf",
+                "exps/hotdog_ngp",
                 "-O",
                 "--bound",
                 "1.0",
@@ -78,10 +78,13 @@
                 "0.67",
                 "--dt_gamma",
                 "0"
-            ]
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "0"
+            }
         },
         {
-            "name": "Python: nerf-flower",
+            "name": "flower-ngp",
             "type": "python",
             "request": "launch",
             "program": "main_nerf.py",
@@ -90,7 +93,7 @@
             "args": [
                 "data/nerf_llff_data/flower/",
                 "--workspace",
-                "exps/flower_nerf",
+                "exps/flower_ngp",
                 "-O",
                 "--bound",
                 "15.0",
@@ -100,14 +103,15 @@
                 "15",
                 "--scale",
                 "0.15",
-                // "--dt_gamma",
-                // "0",
                 "--bg_radius",
                 "32"
-            ]
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "0"
+            }
         },
         {
-            "name": "Python: nerf-family",
+            "name": "family-ngp",
             "type": "python",
             "request": "launch",
             "program": "main_nerf.py",
@@ -116,27 +120,7 @@
             "args": [
                 "data/TanksAndTemple/Family/",
                 "--workspace",
-                "exps/family_nerf",
-                "-O",
-                "--bound",
-                "1.0",
-                "--scale",
-                "0.33",
-                "--dt_gamma",
-                "0"
-            ]
-        },
-        {
-            "name": "Python: nerf-truck",
-            "type": "python",
-            "request": "launch",
-            "program": "main_nerf.py",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "args": [
-                "data/TanksAndTemple/Truck/",
-                "--workspace",
-                "exps/truck_nerf",
+                "exps/family_ngp",
                 "-O",
                 "--bound",
                 "1.0",
@@ -146,11 +130,104 @@
                 "0"
             ],
             "env": {
-                "CUDA_VISIBLE_DEVICES": "1"
+                "CUDA_VISIBLE_DEVICES": "0"
             }
         },
         {
-            "name": "Python: nerf-truck-brush",
+            "name": "truck-ngp",
+            "type": "python",
+            "request": "launch",
+            "program": "main_nerf.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "data/TanksAndTemple/Truck/",
+                "--workspace",
+                "exps/truck_ngp",
+                "-O",
+                "--bound",
+                "1.0",
+                "--scale",
+                "0.33",
+                "--dt_gamma",
+                "0"
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "0"
+            }
+        },
+        {
+            "name": "truck-tensorf",
+            "type": "python",
+            "request": "launch",
+            "program": "main_tensoRF.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "data/TanksAndTemple/Truck/",
+                "--workspace",
+                "exps/truck_tensorf",
+                "-O",
+                "--bound",
+                "1.0",
+                "--scale",
+                "0.33",
+                "--dt_gamma",
+                "0",
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "0"
+            }
+        },
+        {
+            "name": "truck-tensorf-rgbbrush",
+            "type": "python",
+            "request": "launch",
+            "program": "main_SealTensoRF.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "data/TanksAndTemple/Truck/",
+                "--workspace",
+                "exps/truck_tensorf_rgbbrush",
+                "-O",
+                "--extra_epochs",
+                "60",
+                "--bound",
+                "1.0",
+                "--scale",
+                "0.33",
+                "--dt_gamma",
+                "0",
+                "--pretraining_epochs",
+                "50",
+                "--pretraining_local_point_step",
+                "0.005",
+                "--pretraining_surrounding_point_step",
+                "0.005",
+                "--pretraining_surrounding_bounds_extend",
+                "0.2",
+                "--pretraining_global_point_step",
+                "0.1",
+                "--pretraining_lr",
+                "0.02",
+                "--ckpt",
+                "exps/truck_tensorf/checkpoints/tensoRF_ep0138.pth",
+                "--teacher_workspace",
+                "exps/truck_tensorf",
+                "--seal_config",
+                "data/seal/truck_brush_rgb/",
+                "--eval_interval",
+                "5",
+                "--eval_count",
+                "2"
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "0"
+            }
+        },
+        {
+            "name": "truck-ngp-rgbbrush",
             "type": "python",
             "request": "launch",
             "program": "main_SealNeRF.py",
@@ -159,7 +236,7 @@
             "args": [
                 "data/TanksAndTemple/Truck/",
                 "--workspace",
-                "exps/truck_brush_rgb",
+                "exps/truck_ngp_rgbbrush",
                 "-O",
                 "--iters",
                 "120000",
@@ -174,22 +251,22 @@
                 "--pretraining_point_step",
                 "0.002",
                 "--ckpt",
-                "exps/truck_nerf/checkpoints/ngp_ep0138.pth",
+                "exps/truck_ngp/checkpoints/ngp_ep0138.pth",
                 "--teacher_workspace",
-                "exps/truck_nerf",
+                "exps/truck_ngp",
                 "--seal_config",
-                "data/seal/truck_brush/",
+                "data/seal/truck_brush_rgb/",
                 "--eval_interval",
                 "50",
                 "--eval_count",
                 "1"
             ],
             "env": {
-                "CUDA_VISIBLE_DEVICES": "1"
+                "CUDA_VISIBLE_DEVICES": "0"
             }
         },
         {
-            "name": "Python: sealnerf-lego-bbox",
+            "name": "lego-ngp-bbox",
             "type": "python",
             "request": "launch",
             "program": "main_SealNeRF.py",
@@ -198,7 +275,7 @@
             "args": [
                 "data/nerf_synthetic/lego/",
                 "--workspace",
-                "exps/lego_bbox",
+                "exps/lego_ngp_bbox",
                 "-O",
                 "--bound",
                 "1.0",
@@ -210,158 +287,21 @@
                 "130000",
                 "--pretraining_epochs",
                 "150",
-                "--pretraining_point_step",
+                "--pretraining_local_point_step",
                 "0.002",
                 "--ckpt",
-                "exps/lego_nerf/checkpoints/ngp_ep1000.pth",
+                "exps/lego_ngp/checkpoints/ngp_ep1000.pth",
                 "--teacher_workspace",
-                "exps/lego_nerf",
+                "exps/lego_ngp",
                 "--seal_config",
                 "data/seal/lego_bbox/",
                 "--eval_interval",
-                "100",
+                "50",
                 "--eval_count",
-                "10"
-            ],
-            "env": {
-                "CUDA_VISIBLE_DEVICES": "2",
-            }
-        },
-        {
-            "name": "Python: sealnerf-lego-brush",
-            "type": "python",
-            "request": "launch",
-            "program": "main_SealNeRF.py",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "args": [
-                "data/nerf_synthetic/lego/",
-                "--workspace",
-                "exps/seal_lego_bbox_128",
-                "-O",
-                "--iters",
-                "40000",
-                // "--num_rays",
-                // "12288",
-                "--ckpt",
-                "exps/nerf_lego/checkpoints/ngp_ep0300.pth",
-                "--teacher_workspace",
-                "exps/teacher_nerf",
-                "--seal_config",
-                "data/seal/lego_brush_inside/"
-            ],
-            "env": {
-                "CUDA_VISIBLE_DEVICES": "3",
-            }
-        },
-        {
-            "name": "Python: sealnerf-lego-anchor",
-            "type": "python",
-            "request": "launch",
-            "program": "main_SealNeRF.py",
-            "console": "integratedTerminal",
-            "justMyCode": false,
-            "args": [
-                "data/nerf_synthetic/chair/",
-                "--workspace",
-                "exps/seal_lego_anchor",
-                "-O",
-                "--iters",
-                "37000",
-                // "--num_rays",
-                // "12288",
-                // "--custom_pose",
-                "--ckpt",
-                "exps/seal_lego_anchor/checkpoints/ngp_ep0350.pth",
-                "--teacher_workspace",
-                "exps/seal_lego_teacher",
-                "--seal_config",
-                "data/seal/lego_anchor/"
-            ],
-            "env": {
-                "CUDA_VISIBLE_DEVICES": "1",
-            }
-        },
-        {
-            "name": "Python: sealnerf-chair-brush",
-            "type": "python",
-            "request": "launch",
-            "program": "main_SealNeRF.py",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "args": [
-                "data/nerf_synthetic/chair/",
-                "--workspace",
-                "exps/seal_chair_brush_positive",
-                "-O",
-                "--iters",
-                "70000",
-                // "--num_rays",
-                // "12288",
-                "--ckpt",
-                "exps/seal_chair_brush_positive/checkpoints/ngp_ep0601.pth",
-                "--teacher_workspace",
-                "exps/seal_chair_teacher",
-                "--seal_config",
-                "data/seal/chair_brush_positive/"
-            ],
-            "env": {
-                "CUDA_VISIBLE_DEVICES": "1",
-            }
-        },
-        {
-            "name": "Python: sealnerf-chair-brush-inside",
-            "type": "python",
-            "request": "launch",
-            "program": "main_SealNeRF.py",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "args": [
-                "data/nerf_synthetic/chair/",
-                "--workspace",
-                "exps/seal_nerf_chair_inside",
-                "-O",
-                "--iters",
-                "50000",
-                // "--num_rays",
-                // "12288",
-                "--ckpt",
-                "exps/seal_nerf_chair_inside/checkpoints/ngp_ep0400.pth",
-                "--teacher_workspace",
-                "exps/teacher_nerf_chair",
-                "--seal_config",
-                "data/seal/chair_brush_inside/"
+                "2"
             ],
             "env": {
                 "CUDA_VISIBLE_DEVICES": "0",
-            }
-        },
-        {
-            "name": "Python: sealnerf-chair-anchor",
-            "type": "python",
-            "request": "launch",
-            "program": "main_SealNeRF.py",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "args": [
-                "data/nerf_synthetic/chair/",
-                "--workspace",
-                "exps/seal_chair_anchor_random_pose",
-                "-O",
-                "--iters",
-                "35000",
-                // "--num_rays",
-                // "12288",
-                "--custom_pose",
-                "--ckpt",
-                "exps/seal_chair_teacher/checkpoints/ngp_ep0300.pth",
-                "--teacher_workspace",
-                "exps/seal_chair_teacher",
-                "--seal_config",
-                "data/seal/chair_anchor/"
-            ],
-            "env": {
-                "CUDA_VISIBLE_DEVICES": "1",
             }
         }
     ]
