@@ -3,7 +3,7 @@ import numpy as np
 import argparse
 
 from SealNeRF.types import BackBoneTypes, CharacterTypes
-from SealNeRF.provider import NeRFDataset, SealDataset
+from SealNeRF.provider import SealDataset, SealRandomDataset
 from SealNeRF.gui import NeRFGUI
 from SealNeRF.trainer import get_trainer
 from SealNeRF.network import get_network
@@ -190,7 +190,7 @@ if __name__ == '__main__':
             gui.render()
 
         else:
-            test_loader = NeRFDataset(
+            test_loader = SealDataset(
                 opt, device=device, type='test').dataloader()
 
             if test_loader.has_gt:
@@ -226,13 +226,13 @@ if __name__ == '__main__':
 
 
         if opt.custom_pose:
-            train_dataset = SealDataset(
+            train_dataset = SealRandomDataset(
                 opt, seal_mapper=model.seal_mapper, device=device, type='train')
             train_loader = train_dataset.dataloader()
             trainer.log(
                 f'[INFO] Dataset: center={train_dataset.look_at}&radius={train_dataset.radius}')
         else:
-            train_loader = NeRFDataset(
+            train_loader = SealDataset(
                 opt, device=device, type='train').dataloader()
 
         # calc upsample target resolutions
@@ -247,17 +247,17 @@ if __name__ == '__main__':
 
         else:
             if opt.custom_pose:
-                valid_loader = SealDataset(
+                valid_loader = SealRandomDataset(
                     opt, seal_mapper=model.seal_mapper, device=device, type='val').dataloader()
             else:
-                valid_loader = NeRFDataset(
+                valid_loader = SealDataset(
                     opt, device=device, type='val', downscale=1).dataloader()
 
             max_epoch = np.ceil(opt.iters / len(train_loader)).astype(np.int32)
             trainer.train(train_loader, valid_loader, max_epoch)
 
             # also test
-            test_loader = NeRFDataset(
+            test_loader = SealDataset(
                 opt, device=device, type='test').dataloader()
 
             if test_loader.has_gt:
