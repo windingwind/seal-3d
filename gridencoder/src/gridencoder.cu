@@ -392,7 +392,7 @@ void grid_encode_forward_cuda(const float *inputs, const scalar_t *embeddings, c
         case 3: kernel_grid_wrapper<scalar_t, 3>(inputs, embeddings, offsets, outputs, B, C, L, S, H, dy_dx, gridtype, align_corners, interp); break;
         case 4: kernel_grid_wrapper<scalar_t, 4>(inputs, embeddings, offsets, outputs, B, C, L, S, H, dy_dx, gridtype, align_corners, interp); break;
         case 5: kernel_grid_wrapper<scalar_t, 5>(inputs, embeddings, offsets, outputs, B, C, L, S, H, dy_dx, gridtype, align_corners, interp); break;
-        default: throw std::runtime_error{"GridEncoding: C must be 1, 2, 4, or 8."};
+        default: throw std::runtime_error{"GridEncoding: D must be 2, 3, 4, or 5."};
     }   
 }
 
