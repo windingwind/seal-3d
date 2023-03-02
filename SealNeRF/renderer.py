@@ -3,28 +3,6 @@ import raymarching
 
 from nerf.renderer import NeRFRenderer, sample_pdf
 from .seal_utils import get_seal_mapper
-from .color_utils import rgb2hsv_torch, hsv2rgb_torch, rgb2hsl_torch, hsl2rgb_torch
-
-
-def modify_hsv(rgb: torch.Tensor, modification: torch.Tensor):
-    N = rgb.shape[0]
-    hsv = rgb2hsv_torch(rgb.view(1, 3, N))
-    hsv[:, 0, :] += modification[0]
-    hsv[:, 1, :] += modification[1]
-    hsv[:, 2, :] += modification[2]
-    return hsv2rgb_torch(hsv).view(N, 3)
-
-# TODO: fix color bugs and keep lightness
-# the original color is not correct makes the converted hsl value meaningless
-
-
-def modify_rgb(rgb: torch.Tensor, modification: torch.Tensor):
-    N = rgb.shape[0]
-    return modification.repeat(N).view(N, 3).to(rgb.device, rgb.dtype)
-    # hsl = rgb2hsl_torch(rgb.view(1, 3, N))
-    # hsl_modification = rgb2hsl_torch(modification.view(1, 3, 1)).view(3).to(rgb.device, rgb.dtype)
-    # hsl[:, 2, :] = hsl_modification[2]
-    # return hsl2rgb_torch(hsl).view(N, 3)
 
 
 class SealNeRFRenderer(NeRFRenderer):
@@ -313,12 +291,7 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
             sigmas = self.density_scale * sigmas
 
             if self.seal_mapper is not None:
-                if 'hsv' in self.seal_mapper.map_data:
-                    rgbs[mapped_mask] = modify_hsv(
-                        rgbs[mapped_mask], self.seal_mapper.map_data['hsv'])
-                if 'rgb' in self.seal_mapper.map_data:
-                    rgbs[mapped_mask] = modify_rgb(
-                        rgbs[mapped_mask], self.seal_mapper.map_data['rgb'])
+                rgbs[mapped_mask] = self.seal_mapper.map_color(rgbs[mapped_mask])
 
             #print(f'valid RGB query ratio: {mask.sum().item() / mask.shape[0]} (total = {mask.sum().item()})')
 
@@ -397,14 +370,8 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
                 sigmas = self.density_scale * sigmas
 
                 if self.seal_mapper is not None:
-                    if 'hsv' in self.seal_mapper.map_data and len(mapped_mask):
-                        rgbs[mapped_mask] = modify_hsv(
-                            rgbs[mapped_mask], self.seal_mapper.map_data['hsv'])
-                    if 'rgb' in self.seal_mapper.map_data:
-                        rgbs[mapped_mask] = modify_rgb(
-                            rgbs[mapped_mask], self.seal_mapper.map_data['rgb'])
-                    if 'sigma' in self.seal_mapper.map_data:
-                        sigmas[mapped_mask] += self.seal_mapper.map_data
+                    rgbs[mapped_mask] = self.seal_mapper.map_color(rgbs[mapped_mask])
+
                 raymarching.composite_rays(
                     n_alive, n_step, rays_alive, rays_t, sigmas, rgbs, deltas, weights_sum, depth, image, T_thresh)
 

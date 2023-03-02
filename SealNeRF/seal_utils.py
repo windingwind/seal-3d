@@ -1,6 +1,5 @@
 import os
 from typing import Union, Tuple
-
 import json5
 import numpy as np
 import torch
@@ -13,10 +12,14 @@ from trimesh.proximity import ProximityQuery
 from skspatial.objects import Plane
 from sklearn.neighbors import NearestNeighbors
 import open3d as o3d
+from .color_utils import rgb2hsv_torch, hsv2rgb_torch, rgb2hsl_torch, hsl2rgb_torch
 
 
-# the virtual root class of all kinds of seal mappers
 class SealMapper:
+    """
+    the virtual root class of all kinds of seal mappers
+    """
+
     def __init__(self) -> None:
         self.device = 'cpu'
         self.dtype = torch.float32
@@ -34,6 +37,15 @@ class SealMapper:
     # map the points & dirs back to where they are from
     def map_to_origin(self, points: torch.Tensor, dirs: torch.Tensor = None):
         raise NotImplementedError()
+
+    def map_color(self, colors: torch.Tensor) -> torch.Tensor:
+        if 'hsv' in self.map_data:
+            colors = modify_hsv(
+                colors, self.map_data['hsv'])
+        if 'rgb' in self.map_data:
+            colors = modify_rgb(
+                colors, self.map_data['rgb'])
+        return colors
 
     # convert self.map_data to desired device and dtype
     def map_data_conversion(self, T: torch.Tensor = None, force: bool = False):
@@ -134,7 +146,7 @@ class SealBBoxMapper(SealMapper):
         has_dirs = not dirs is None
         map_mask = self.map_mask(points)
         if not map_mask.any():
-            return points, dirs, []
+            return points, dirs, map_mask
 
         inner_points = points[map_mask]
         inner_dirs = dirs[map_mask] if has_dirs else None
@@ -193,7 +205,8 @@ class SealBrushMapper(SealMapper):
             self.to_mesh = get_trimesh_box(np.vstack([points + 2 * normal_expand, points - seal_config['brushDepth'] * normal_expand])
                                            )
         else:
-            self.to_mesh = get_trimesh_fit(points, normal_expand, [-seal_config['brushDepth'], 2])
+            self.to_mesh = get_trimesh_fit(
+                points, normal_expand, [-seal_config['brushDepth'], 2])
         self.to_mesh.export(os.path.join(config_path, 'to.obj'))
 
         self.map_meshes = trimesh_to_pytorch3d(self.to_mesh)
@@ -223,7 +236,7 @@ class SealBrushMapper(SealMapper):
         has_dirs = False
         map_mask = self.map_mask(points)
         if not map_mask.any():
-            return points, dirs, []
+            return points, dirs, map_mask
 
         inner_points = points[map_mask]
         inner_dirs = dirs[map_mask] if has_dirs else None
@@ -315,7 +328,7 @@ class SealAnchorMapper(SealMapper):
         has_dirs = False
         map_mask = self.map_mask(points)
         if not map_mask.any():
-            return points, dirs, []
+            return points, dirs, map_mask
 
         # project points to anchor sphere
         projected_points = self.project_points(
@@ -505,3 +518,28 @@ def points_mesh_distance(points: torch.Tensor, meshes: Meshes, tris: torch.Tenso
 
     dists = torch.sqrt(dists)
     return dists
+
+
+def modify_hsv(rgb: torch.Tensor, modification: torch.Tensor):
+    """
+    rgb -> hsv + mod -> rgb
+    """
+    N = rgb.shape[0]
+    hsv = rgb2hsv_torch(rgb.view(1, 3, N))
+    hsv[:, 0, :] += modification[0]
+    hsv[:, 1, :] += modification[1]
+    hsv[:, 2, :] += modification[2]
+    return hsv2rgb_torch(hsv).view(N, 3)
+
+
+def modify_rgb(rgb: torch.Tensor, modification: torch.Tensor):
+    """
+    TODO: fix color bugs and keep lightness
+    the original color is not correct makes the converted hsl value meaningless
+    """
+    N = rgb.shape[0]
+    return modification.repeat(N).view(N, 3).to(rgb.device, rgb.dtype)
+    # hsl = rgb2hsl_torch(rgb.view(1, 3, N))
+    # hsl_modification = rgb2hsl_torch(modification.view(1, 3, 1)).view(3).to(rgb.device, rgb.dtype)
+    # hsl[:, 2, :] = hsl_modification[2]
+    # return hsl2rgb_torch(hsl).view(N, 3)
