@@ -8,7 +8,6 @@ from pytorch3d.structures import Meshes
 from pytorch3d import _C
 import trimesh
 from trimesh.creation import uv_sphere
-from trimesh.proximity import ProximityQuery
 from skspatial.objects import Plane
 from sklearn.neighbors import NearestNeighbors
 import open3d as o3d
@@ -33,12 +32,19 @@ class SealMapper:
         self.map_meshes: Meshes = None
         self.map_triangles: torch.Tensor = None
 
-    # @virtual
-    # map the points & dirs back to where they are from
+
     def map_to_origin(self, points: torch.Tensor, dirs: torch.Tensor = None):
+        """
+        @virtual
+
+        map the points & dirs back to where they are from
+        """
         raise NotImplementedError()
 
     def map_color(self, colors: torch.Tensor) -> torch.Tensor:
+        """
+        map color
+        """
         if 'hsv' in self.map_data:
             colors = modify_hsv(
                 colors, self.map_data['hsv'])
@@ -47,8 +53,10 @@ class SealMapper:
                 colors, self.map_data['rgb'])
         return colors
 
-    # convert self.map_data to desired device and dtype
     def map_data_conversion(self, T: torch.Tensor = None, force: bool = False):
+        """
+        convert self.map_data to desired device and dtype
+        """
         if T is None and not force:
             return
         if T is not None and (self.device != T.device or self.dtype != T.dtype):
@@ -72,8 +80,10 @@ class SealMapper:
         self.map_triangles = self.map_triangles.to(
             device=self.device, dtype=self.dtype)
 
-    # early terminate computation of points outside bbox
     def map_mask(self, points: torch.Tensor) -> torch.BoolTensor:
+        """
+        early terminate computation of points outside bbox
+        """
         bound_mask = torch.logical_and(points.all(1), torch.logical_and(
             self.map_data['map_bound'][1] >= points, points >= self.map_data['map_bound'][0]).all(1))
         if not bound_mask.any():
@@ -83,13 +93,15 @@ class SealMapper:
         return bound_mask
 
 
-# seal tool, transform and resize space inside a bbox
-# seal_config format:
-# type: bbox
-# raw: [N,3] points
-# transform: [4,4]
-# scale: [3]
 class SealBBoxMapper(SealMapper):
+    """
+    seal tool, transform and resize space inside a bbox
+    seal_config format:
+    type: bbox
+    raw: [N,3] points
+    transform: [4,4]
+    scale: [3]
+    """
     def __init__(self, config_path: str, seal_config: object) -> None:
         super().__init__()
 
@@ -178,17 +190,20 @@ class SealBBoxMapper(SealMapper):
         return points_copy, dirs_copy, map_mask
 
 
-# brush tool, increase/decrease the surface height along normal direction
-# seal_config format:
-# type: brush
-# raw: [N,3] points
-# normal: [3] decide which side of the plane is the positive side
-# brushType: 'line' | 'curve'
-# brushDepth: float maximun affected depth along the opposite direction of normal
-# brushPressure: float maximun height, can be negative
-# attenuationDistance: float d(point - center) < attenuationDistance, keeps the highest pressure
-# attenuationMode: float d(point - center) > attenuationDistance, pressure attenuates. linear, ease-in, ease-out
 class SealBrushMapper(SealMapper):
+    """
+    brush tool, increase/decrease the surface height along normal direction
+    seal_config format:
+    type: brush
+    raw: [N,3] points
+    normal: [3] decide which side of the plane is the positive side
+    brushType: 'line' | 'curve'
+    brushDepth: float maximun affected depth along the opposite direction of normal
+    brushPressure: float maximun height, can be negative
+    attenuationDistance: float d(point - center) < attenuationDistance, keeps the highest pressure
+    attenuationMode: float d(point - center) > attenuationDistance, pressure attenuates. linear, ease-in, ease-out
+    """
+
     def __init__(self, config_path: str, seal_config: object) -> None:
         super().__init__()
 
@@ -273,13 +288,16 @@ class SealBrushMapper(SealMapper):
         return points_copy, dirs, map_mask
 
 
-# control point (anchor) tool
-# seal_config format:
-# type: anchor
-# raw: [N,3] points, determine the plane
-# translation: [3]
-# radius: float affected area radius
 class SealAnchorMapper(SealMapper):
+    """
+    control point (anchor) tool
+    seal_config format:
+    type: anchor
+    raw: [N,3] points, determine the plane
+    translation: [3]
+    radius: float affected area radius
+    """
+
     def __init__(self, config_path: str, seal_config: object) -> None:
         super().__init__()
         v_translation = np.array(seal_config['translation'])
