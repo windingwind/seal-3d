@@ -204,5 +204,3 @@ class NeRFNetwork(NeRFRenderer):
             params.append({'params': self.bg_net.parameters(), 'lr': lr})
         
         return params
-
-NeRFNetwork._self = NeRFNetwork

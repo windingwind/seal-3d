@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import argparse
 
+from SealNeRF.types import BackBoneTypes, CharacterTypes
 from SealNeRF.provider import NeRFDataset, SealDataset
 from SealNeRF.gui import NeRFGUI
 from SealNeRF.trainer import get_trainer
@@ -14,10 +15,10 @@ from loss import huber_loss
 # torch.autograd.set_detect_anomaly(True)
 
 if __name__ == '__main__':
-    TeacherTrainer = get_trainer('ngp', 'teacher')
-    StudentTrainer = get_trainer('ngp', 'student')
-    TeacherNetwork = get_network('ngp', 'teacher')
-    StudentNetwork = get_network('ngp', 'student')
+    TeacherTrainer = get_trainer(BackBoneTypes.NGP, CharacterTypes.Teacher)
+    StudentTrainer = get_trainer(BackBoneTypes.NGP, CharacterTypes.Student)
+    TeacherNetwork = get_network(BackBoneTypes.NGP, CharacterTypes.Teacher)
+    StudentNetwork = get_network(BackBoneTypes.NGP, CharacterTypes.Student)
 
     parser = argparse.ArgumentParser()
     parser.add_argument('path', type=str)

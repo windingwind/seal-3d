@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import argparse
 
+from SealNeRF.types import BackBoneTypes, CharacterTypes
 from SealNeRF.provider import NeRFDataset, SealDataset
 from SealNeRF.gui import NeRFGUI
 from SealNeRF.trainer import get_trainer
@@ -11,10 +12,10 @@ from nerf.utils import seed_everything, PSNRMeter, LPIPSMeter
 # torch.autograd.set_detect_anomaly(True)
 
 if __name__ == '__main__':
-    TeacherTrainer = get_trainer('tensoRF', 'teacher')
-    StudentTrainer = get_trainer('tensoRF', 'student')
-    TeacherNetwork = get_network('tensoRF', 'teacher')
-    StudentNetwork = get_network('tensoRF', 'student')
+    TeacherTrainer = get_trainer(BackBoneTypes.TensoRF, CharacterTypes.Teacher)
+    StudentTrainer = get_trainer(BackBoneTypes.TensoRF, CharacterTypes.Student)
+    TeacherNetwork = get_network(BackBoneTypes.TensoRF, CharacterTypes.Teacher)
+    StudentNetwork = get_network(BackBoneTypes.TensoRF, CharacterTypes.Student)
 
     parser = argparse.ArgumentParser()
     parser.add_argument('path', type=str)

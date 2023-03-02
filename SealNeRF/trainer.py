@@ -7,21 +7,28 @@ import tqdm
 from nerf.utils import Trainer as NGPTrainer
 from tensoRF.utils import Trainer as TensoRFTrainer
 from scipy.spatial.transform import Rotation
+from .types import BackBoneTypes, CharacterTypes
 
 
-def get_trainer(backbone: Union['ngp', 'tensoRF'], character: Union['teacher', 'student']):
-    return trainer_constructor(backbone_refs[backbone], backbone) if character == 'student' else backbone_refs[backbone]
+def get_trainer(backbone: BackBoneTypes, character: CharacterTypes):
+    if character is CharacterTypes.Student:
+        trainer_cls = trainer_constructor(backbone_refs[backbone], backbone)
+    elif character is CharacterTypes.Teacher:
+        trainer_cls = backbone_refs[backbone]
+    else:
+        raise NotImplementedError(f'trainer character {character.name}')
+    return trainer_cls
 
 
 backbone_refs = {
-    'ngp': NGPTrainer,
-    'tensoRF': TensoRFTrainer
+    BackBoneTypes.NGP: NGPTrainer,
+    BackBoneTypes.TensoRF: TensoRFTrainer
 }
 
 trainer_types = Union[NGPTrainer, TensoRFTrainer]
 
 
-def trainer_constructor(base, backbone: str):
+def trainer_constructor(base, backbone: BackBoneTypes):
     Trainer = type(f'Trainer_{backbone}', (base,), {
         '__init__': init,
         'init_pretraining': init_pretraining,
@@ -308,9 +315,9 @@ def pretrain_step(self: trainer_types, data):
 
 
 def freeze_mlp(self: trainer_types, freeze: bool = True):
-    if self._backbone == 'tensoRF':
+    if self._backbone is BackBoneTypes.TensoRF:
         return
-    elif self._backBone == 'ngp':
+    elif self._backbone is BackBoneTypes.NGP:
         if hasattr(self.model, 'sigma_net'):
             freeze_module_list(self.model.sigma_net, freeze)
         if hasattr(self.model, 'color_net'):
