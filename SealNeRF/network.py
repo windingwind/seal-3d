@@ -5,12 +5,19 @@ from tensoRF.network import NeRFNetwork as TensoRFNetwork
 
 
 def get_network(backbone: BackBoneTypes, character: CharacterTypes):
+    """
+    Get network class of `backbone` and `character` defined in `./types.py`
+    """
     NeRFNetwork = network_constructor(
         backbone_refs[backbone], backbone_funcs[backbone])
     return type(f'NeRFNetwork_{backbone.name}_{character.name}', (character_refs[character], NeRFNetwork), {})
 
 
 def network_constructor(ref, func_names: list):
+    """
+    Construct network class with class methods dynamically copied from `ref`.
+    Hack the base class to our renderer.
+    """
     funcs = {}
     for k in func_names:
         funcs[k] = getattr(ref, k)
@@ -20,6 +27,9 @@ def network_constructor(ref, func_names: list):
 
 
 def network_decorator(ref):
+    """
+    Add attr `_self` to class so that the `super(self._self, self)` can be called.
+    """
     ref._self = ref
     return ref
 

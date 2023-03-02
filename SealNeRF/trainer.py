@@ -11,6 +11,9 @@ from .types import BackBoneTypes, CharacterTypes
 
 
 def get_trainer(backbone: BackBoneTypes, character: CharacterTypes):
+    """
+    Get trainer class of `backbone` and `character` defined in `./types.py`
+    """
     if character is CharacterTypes.Student:
         trainer_cls = trainer_constructor(backbone_refs[backbone], backbone)
     elif character is CharacterTypes.Teacher:
@@ -20,15 +23,10 @@ def get_trainer(backbone: BackBoneTypes, character: CharacterTypes):
     return trainer_cls
 
 
-backbone_refs = {
-    BackBoneTypes.NGP: NGPTrainer,
-    BackBoneTypes.TensoRF: TensoRFTrainer
-}
-
-trainer_types = Union[NGPTrainer, TensoRFTrainer]
-
-
 def trainer_constructor(base, backbone: BackBoneTypes):
+    """
+    Construct trainer class with dynamically selected base class
+    """
     Trainer = type(f'Trainer_{backbone}', (base,), {
         '__init__': init,
         'init_pretraining': init_pretraining,
@@ -46,6 +44,14 @@ def trainer_constructor(base, backbone: BackBoneTypes):
     })
     Trainer._self = Trainer
     return Trainer
+
+
+backbone_refs = {
+    BackBoneTypes.NGP: NGPTrainer,
+    BackBoneTypes.TensoRF: TensoRFTrainer
+}
+
+trainer_types = Union[NGPTrainer, TensoRFTrainer]
 
 
 def init(self: trainer_types, name, opt, student_model, teacher_trainer, proxy_train=True, proxy_test=False, proxy_eval=False, cache_gt=False, criterion=None, optimizer=None, ema_decay=None, lr_scheduler=None, metrics=..., local_rank=0, world_size=1, device=None, mute=False, fp16=False, eval_interval=1, eval_count=None, max_keep_ckpt=2, workspace='workspace', best_mode='min', use_loss_as_metric=True, report_metric_at_train=False, use_checkpoint="latest", use_tensorboardX=True, scheduler_update_every_step=False):
