@@ -34,6 +34,8 @@ def generate_editing_tool_config(mesh_path: str, save_path: str, type: str = Non
         with open(save_path, 'r') as f:
             obj = json5.load(f)
     else:
+        head, tail = os.path.split(save_path)
+        os.makedirs(head)
         obj = generate_default_editing_tool_config(type)
     with open(save_path, 'w') as f:
         obj['raw'] = mesh.vertices.tolist()
