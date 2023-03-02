@@ -26,14 +26,6 @@ def network_constructor(ref, func_names: list):
     return NeRFNetwork
 
 
-def network_decorator(ref):
-    """
-    Add attr `_self` to class so that the `super(self._self, self)` can be called.
-    """
-    ref._self = ref
-    return ref
-
-
 backbone_funcs = {
     BackBoneTypes.NGP: ['__init__', 'forward',
                         'density', 'background', 'color', 'get_params'],
@@ -42,8 +34,8 @@ backbone_funcs = {
 }
 
 backbone_refs = {
-    BackBoneTypes.NGP: network_decorator(NGPNetwork),
-    BackBoneTypes.TensoRF: network_decorator(TensoRFNetwork)
+    BackBoneTypes.NGP: NGPNetwork,
+    BackBoneTypes.TensoRF: TensoRFNetwork
 }
 
 character_refs = {
