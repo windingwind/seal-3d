@@ -27,6 +27,8 @@ if __name__ == '__main__':
     # training options
     parser.add_argument('--iters', type=int, default=30000,
                         help="training iters")
+    parser.add_argument('--extra_epochs', type=int, default=None,
+                        help="extra training epochs, overwrites iters")
     parser.add_argument('--lr0', type=float, default=2e-2,
                         help="initial learning rate for embeddings")
     parser.add_argument('--lr1', type=float, default=1e-3,
@@ -113,7 +115,7 @@ if __name__ == '__main__':
                         help="pretraining point sampling step")
     parser.add_argument('--pretraining_surrounding_angle_step', type=float, default=45,
                         help="pretraining angle sampling step in degree")
-    parser.add_argument('--pretraining_surrounding_bounds_extend', type=float, default=0.2,
+    parser.add_argument('--pretraining_surrounding_bounds_extend', type=float, default=0.,
                         help="pretraining bounds extend")
     # global
     parser.add_argument('--pretraining_global_point_step', type=float, default=0.05,
@@ -266,6 +268,8 @@ if __name__ == '__main__':
                     opt, device=device, type='val', downscale=1).dataloader()
 
             max_epoch = np.ceil(opt.iters / len(train_loader)).astype(np.int32)
+            trainer.log(
+                f'[INFO] Proxy train/eval/test: {trainer.proxy_train}/{trainer.proxy_eval}/{trainer.proxy_test}')
             trainer.train(train_loader, valid_loader, max_epoch)
 
             # also test

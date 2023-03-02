@@ -208,6 +208,9 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
 
 
 def train(self: trainer_types, train_loader, valid_loader, max_epochs):
+    if self.opt.extra_epochs is not None:
+        max_epochs = self.epoch + self.opt.extra_epochs
+
     if self.use_tensorboardX and self.local_rank == 0:
         self.writer = tensorboardX.SummaryWriter(
             os.path.join(self.workspace, "run", self.name))

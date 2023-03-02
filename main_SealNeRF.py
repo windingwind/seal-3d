@@ -31,6 +31,8 @@ if __name__ == '__main__':
     # training options
     parser.add_argument('--iters', type=int, default=30000,
                         help="training iters")
+    parser.add_argument('--extra_epochs', type=int, default=None,
+                        help="extra training epochs, overwrites iters")
     parser.add_argument('--lr', type=float, default=1e-2,
                         help="initial learning rate")
     parser.add_argument('--ckpt', type=str, default='latest')
@@ -93,7 +95,7 @@ if __name__ == '__main__':
                         help="pretraining point sampling step")
     parser.add_argument('--pretraining_surrounding_angle_step', type=float, default=45,
                         help="pretraining angle sampling step in degree")
-    parser.add_argument('--pretraining_surrounding_bounds_extend', type=float, default=0.2,
+    parser.add_argument('--pretraining_surrounding_bounds_extend', type=float, default=0.1,
                         help="pretraining bounds extend")
     # global
     parser.add_argument('--pretraining_global_point_step', type=float, default=0.05,
