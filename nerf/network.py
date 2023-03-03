@@ -50,11 +50,14 @@ class NeRFNetwork(NeRFRenderer):
         self.num_layers_color = num_layers_color        
         self.hidden_dim_color = hidden_dim_color
         self.encoder_dir, self.in_dim_dir = get_encoder(encoding_dir)
+
+        # extra color encoder
+        self.encoder_color, self.in_dim_color = get_encoder(encoding, desired_resolution=2048 * bound)
         
         color_net =  []
         for l in range(num_layers_color):
             if l == 0:
-                in_dim = self.in_dim_dir + self.geo_feat_dim
+                in_dim = self.in_dim_dir + self.geo_feat_dim + self.in_dim_color
             else:
                 in_dim = hidden_dim_color
             
@@ -97,9 +100,9 @@ class NeRFNetwork(NeRFRenderer):
         # d: [N, 3], nomalized in [-1, 1]
 
         # sigma
-        x = self.encoder(x, bound=self.bound)
+        _x = self.encoder(x, bound=self.bound)
 
-        h = x
+        h = _x
         for l in range(self.num_layers):
             h = self.sigma_net[l](h)
             if l != self.num_layers - 1:
@@ -110,9 +113,9 @@ class NeRFNetwork(NeRFRenderer):
         geo_feat = h[..., 1:]
 
         # color
-        
         d = self.encoder_dir(d)
-        h = torch.cat([d, geo_feat], dim=-1)
+        geo_color_feature = self.encoder_color(x, bound=self.bound)
+        h = torch.cat([d, geo_feat, geo_color_feature], dim=-1)
         for l in range(self.num_layers_color):
             h = self.color_net[l](h)
             if l != self.num_layers_color - 1:
@@ -174,7 +177,8 @@ class NeRFNetwork(NeRFRenderer):
             geo_feat = geo_feat[mask]
 
         d = self.encoder_dir(d)
-        h = torch.cat([d, geo_feat], dim=-1)
+        geo_color_feature = self.encoder_color(x, bound=self.bound)
+        h = torch.cat([d, geo_feat, geo_color_feature], dim=-1)
         for l in range(self.num_layers_color):
             h = self.color_net[l](h)
             if l != self.num_layers_color - 1:
@@ -196,6 +200,7 @@ class NeRFNetwork(NeRFRenderer):
         params = [
             {'params': self.encoder.parameters(), 'lr': lr},
             {'params': self.sigma_net.parameters(), 'lr': lr},
+            {'params': self.encoder_color.parameters(), 'lr': lr},
             {'params': self.encoder_dir.parameters(), 'lr': lr},
             {'params': self.color_net.parameters(), 'lr': lr}, 
         ]
