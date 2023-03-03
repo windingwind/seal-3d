@@ -18,8 +18,8 @@ class SealNeRFRenderer(NeRFRenderer):
         self.density_bitfield_origin = None
         self.density_bitfield_hacked = False
 
-    def init_mapper(self, seal_config_path: str):
-        self.seal_mapper = get_seal_mapper(seal_config_path)
+    def init_mapper(self, config_dir: str, config_dict: dict = None):
+        self.seal_mapper = get_seal_mapper(config_dir, config_dict)
         coords_min, coords_max = torch.floor(
             ((self.seal_mapper.map_data['force_fill_bound'] + self.bound) / self.bound / 2) * self.grid_size)
         X, Y, Z = torch.meshgrid(torch.arange(coords_min[0], coords_max[0]),

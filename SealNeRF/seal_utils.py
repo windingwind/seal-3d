@@ -404,15 +404,16 @@ class SealAnchorMapper(SealMapper):
         return target_points - v_projection
 
 
-def get_seal_mapper(config_path: str) -> SealMapper:
-    with open(os.path.join(config_path, 'seal.json'), 'r') as f:
-        seal_config = json5.load(f)
-    if seal_config['type'] == 'bbox':
-        return SealBBoxMapper(config_path, seal_config)
-    elif seal_config['type'] == 'brush':
-        return SealBrushMapper(config_path, seal_config)
-    elif seal_config['type'] == 'anchor':
-        return SealAnchorMapper(config_path, seal_config)
+def get_seal_mapper(config_path: str, config_dict: dict = None) -> SealMapper:
+    if config_dict is None:
+        with open(os.path.join(config_path, 'seal.json'), 'r') as f:
+            config_dict = json5.load(f)
+    if config_dict['type'] == 'bbox':
+        return SealBBoxMapper(config_path, config_dict)
+    elif config_dict['type'] == 'brush':
+        return SealBrushMapper(config_path, config_dict)
+    elif config_dict['type'] == 'anchor':
+        return SealAnchorMapper(config_path, config_dict)
     else:
         raise NotImplementedError()
 
