@@ -4,6 +4,8 @@ import tensorboardX
 import torch
 import numpy as np
 import tqdm
+import time
+import json5
 from nerf.utils import Trainer as NGPTrainer
 from tensoRF.utils import Trainer as TensoRFTrainer
 from scipy.spatial.transform import Rotation
@@ -238,18 +240,30 @@ def train(self: trainer_types, train_loader, valid_loader, max_epochs):
 
     first_epoch = self.epoch + 1
 
+    time_inspector = {
+        'pretraining': [],
+        'pretraining_avg': 0,
+        'pretraining_total': 0,
+        'training': [],
+        'training_avg': 0,
+        'training_total': 0,
+    }
     for epoch in range(self.epoch + 1, max_epochs + 1):
         self.epoch = epoch
 
         is_pretraining = epoch - first_epoch < self.pretraining_epochs
 
         if is_pretraining:
+            t = time.time()
             # skip checkpoint saving for pretraining
             self.pretrain_one_epoch()
+            time_inspector['pretraining'].append(time.time() - t)
         else:
             self.freeze_mlp(False)
             self.set_lr(-1)
+            t = time.time()
             self.train_one_epoch(train_loader)
+            time_inspector['training'].append(time.time() - t)
 
             if self.workspace is not None and self.local_rank == 0:
                 self.save_checkpoint(full=True, best=False)
@@ -257,6 +271,13 @@ def train(self: trainer_types, train_loader, valid_loader, max_epochs):
         if self.epoch % self.eval_interval == 0:
             self.evaluate_one_epoch(valid_loader)
             self.save_checkpoint(full=False, best=True)
+
+    time_inspector['pretraining_avg'] = np.mean(time_inspector['pretraining'])
+    time_inspector['pretraining_total'] = np.sum(time_inspector['pretraining'])
+    time_inspector['training_avg'] = np.mean(time_inspector['training'])
+    time_inspector['training_total'] = np.sum(time_inspector['training'])
+    with open(os.path.join(self.workspace, 'timer.json'), 'w') as f:
+        json5.dump(time_inspector, f, quote_keys=True)
 
     if self.use_tensorboardX and self.local_rank == 0:
         self.writer.close()
