@@ -10,7 +10,15 @@ import numpy as np
 import dearpygui.dearpygui as dpg
 import cv2
 from scipy.spatial.transform import Rotation as R
-from SealNeRF.trainer import SealTrainer, OriginalTrainer
+from SealNeRF.types import BackBoneTypes, CharacterTypes
+from SealNeRF.provider import SealDataset, SealRandomDataset
+# from SealNeRF.gui import NeRFGUI
+from SealNeRF.trainer import get_trainer
+# from SealNeRF.trainer import SealTrainer, OriginalTrainer
+import json, json5
+
+OriginalTrainer = get_trainer(BackBoneTypes.NGP, CharacterTypes.Teacher)
+SealTrainer = get_trainer(BackBoneTypes.NGP, CharacterTypes.Student)
 
 
 class OrbitCamera:
@@ -65,7 +73,8 @@ class OrbitCamera:
 
 STATE_PREVIEW = 0
 STATE_BRUSH = 1
-STATE_TRAIN = 2
+STATE_BBOX = 2
+STATE_TRAIN = 3
 
 class NeRFGUI:
     def __init__(self, opt, teacher_trainer: OriginalTrainer, trainer: SealTrainer, train_loader=None, debug=True):
@@ -76,18 +85,30 @@ class NeRFGUI:
         self.cam = OrbitCamera(opt.W, opt.H, r=opt.radius, fovy=opt.fovy)
         self.debug = debug
         self.bg_color = torch.ones(3, dtype=torch.float32)  # default white bg
+        self.config = None
+        self.brush_config = {
+            "type": "brush",
+            "normal": [0, 1, 0],
+            "brushType": "line",
+            "brushDepth": 1,
+            "brushPressure": 0.01,
+            "attenuationDistance": 0.02,
+            "attenuationMode": "linear"
+        }
         self.brush_thickness = 10
         self.brush_color = np.array([1.0, 0.0, 0.0], dtype=np.float32)
         self.brush_mask = np.zeros((self.H, self.W, 1), dtype=np.uint8)
         self.ii, self.jj = np.meshgrid(np.arange(opt.H), np.arange(opt.W), indexing='ij')
         self.ii, self.jj = self.ii[..., np.newaxis], self.jj[..., np.newaxis]
-        self.training = False
+        # self.training = False
         self.brushing = False
         self.state = STATE_PREVIEW
         self.step = 0  # training step
 
         self.teacher_trainer = teacher_trainer
         self.trainer = trainer
+        self.train_recorder = torch.cuda.Event(enable_timing=True)
+        self.is_pretraining = False
         self.train_loader = train_loader
         if train_loader is not None:
             self.trainer.error_map = train_loader._data.error_map
@@ -114,19 +135,26 @@ class NeRFGUI:
             enable_timing=True), torch.cuda.Event(enable_timing=True)
         starter.record()
 
+        # print(type(self.trainer))
+        # print(dir(self.trainer))
         outputs = self.trainer.train_gui(
-            self.train_loader, step=self.train_steps)
+            self.train_loader, step=self.train_steps, is_pretraining=self.is_pretraining)
+            # self.train_loader, step=self.train_steps, is_pretraining=self.step > self.trainer.pretraining_epochs)
 
         ender.record()
         torch.cuda.synchronize()
         t = starter.elapsed_time(ender)
 
         self.step += self.train_steps
+        if self.is_pretraining and self.step > self.trainer.pretraining_epochs:
+            t_pretrain = self.train_recorder.elapsed_time(ender)
+            self.trainer.log(f"[INFO] Pretraining time: {t_pretrain/1000:.4f}s")
+            self.is_pretraining = False
         self.need_update = True
 
         dpg.set_value("_log_train_time", f'{t:.4f}ms ({int(1000/t)} FPS)')
-        dpg.set_value(
-            "_log_train_log", f'step = {self.step: 5d} (+{self.train_steps: 2d}), loss = {outputs["loss"]:.4f}, lr = {outputs["lr"]:.5f}')
+        # dpg.set_value(
+        #     "_log_train_log", f'step = {self.step: 5d} (+{self.train_steps: 2d}), loss = {outputs["loss"]:.4f}, lr = {outputs["lr"]:.5f}')
 
         # dynamic train steps
         # max allowed train time per-frame is 500 ms
@@ -136,7 +164,7 @@ class NeRFGUI:
             self.train_steps = train_steps
 
     def prepare_buffer(self, outputs):
-        def mix_brush(img, mask, color, alpha=0.5):
+        def mix_brush(img, mask, color, alpha=1.0):
             return np.where(mask, color[np.newaxis,np.newaxis,:] * alpha + img * (1 - alpha), img)
             # return np.where(mask, color[np.newaxis,np.newaxis,:], color[np.newaxis,np.newaxis,:])
         if self.mode == 'image':
@@ -145,11 +173,17 @@ class NeRFGUI:
             else:
                 return mix_brush(outputs['image'], self.brush_mask, self.brush_color)
         else:
-            depth_img = np.expand_dims(outputs['depth'], -1).repeat(3, -1)
+            depth_img = np.expand_dims(outputs['depth'], -1).repeat(3, -1).clamp_max(1)
             if self.state != STATE_BRUSH:
                 return depth_img
             else:
                 return mix_brush(depth_img, self.brush_mask, self.brush_color)
+    
+    def get_mask_pos(self):
+        position = self.teacher_trainer.test_gui(
+                self.cam.pose, self.cam.intrinsics, self.W, self.H, self.bg_color, 1, 1, True)['pos']
+        return position[self.brush_mask[:,:,0] > 0]
+
 
     def test_step(self):
         # TODO: seems we have to move data from GPU --> CPU --> GPU?
@@ -160,7 +194,7 @@ class NeRFGUI:
                 enable_timing=True), torch.cuda.Event(enable_timing=True)
             starter.record()
 
-            outputs = self.teacher_trainer.test_gui(
+            outputs = self.trainer.test_gui(
                 self.cam.pose, self.cam.intrinsics, self.W, self.H, self.bg_color, self.spp, self.downscale)
 
             ender.record()
@@ -238,44 +272,135 @@ class NeRFGUI:
 
             # train button
             if not self.opt.test:
+                def callback_file(sender, app_data):
+                    with open(app_data['file_path_name'], 'r') as f:
+                        self.config = json5.load(f)
+                    # file_name = app_data['file_name']
+                    # current_path = app_data['current_path']
+                
+                with dpg.file_dialog(directory_selector=False, show=False, callback=callback_file, id="_file_selector", width=400,height=300):
+                    dpg.add_file_extension(".json")
+                # dpg.add_file_dialog(
+                #     show=False, callback=callback_file, tag="_file_selector", width=600 ,height=400)
+
                 with dpg.collapsing_header(label="Train", default_open=True):
+                    with dpg.group(horizontal=True, tag="_train"):
+                        dpg.add_text("Train: ")
+                        def callback_train(sender, app_data):
+                            if self.state == STATE_TRAIN:
+                                self.state = STATE_PREVIEW
+                                self.config = None
+                                dpg.configure_item(
+                                    "_button_train", label="train")
+                                return
+                            if self.config is None:
+                                dpg.set_value("_log_train", "No edit configure!")
+                            else:
+                                dpg.set_value("_log_train", "")
+                                if self.state == STATE_BRUSH:
+                                    brush_pos = self.get_mask_pos() # (N, 3)
+                                    self.config = dict(raw=brush_pos, rgb=self.brush_color, **self.brush_config)
+                                self.trainer.model.init_mapper(self.opt.workspace, self.config)
+                                self.teacher_trainer.model.init_mapper(self.opt.workspace, self.config)
+                                self.trainer.init_pretraining(epochs=self.opt.pretraining_epochs,
+                                    local_point_step=self.opt.pretraining_local_point_step,
+                                    local_angle_step=self.opt.pretraining_local_angle_step,
+                                    surrounding_point_step=self.opt.pretraining_surrounding_point_step,
+                                    surrounding_angle_step=self.opt.pretraining_surrounding_angle_step,
+                                    surrounding_bounds_extend=self.opt.pretraining_surrounding_bounds_extend,
+                                    global_point_step=self.opt.pretraining_global_point_step,
+                                    global_angle_step=self.opt.pretraining_global_angle_step,
+                                    batch_size=self.opt.pretraining_batch_size,
+                                    lr=self.opt.pretraining_lr)
+                                torch.cuda.synchronize()
+                                self.train_recorder.record()
+                                self.state = STATE_TRAIN
+                                if self.opt.pretraining_epochs > 0:
+                                    self.is_pretraining = True
+                                dpg.configure_item(
+                                    "_button_train", label="stop")
+                        dpg.add_button(
+                            label="train", tag="_button_train", callback=callback_train)
+                        dpg.add_text(tag="_log_train")
+                        dpg.bind_item_theme("_button_train", theme_button)
+
+                    with dpg.group(horizontal=True, tag="_config"):
+                        dpg.add_text("Config: ")
+                        dpg.add_button(label="open", tag="_button_config", callback=lambda:dpg.show_item("_file_selector"))
+                        dpg.bind_item_theme("_button_config", theme_button)
 
                     # train / stop
-                    with dpg.group(horizontal=True, tag="_train"):
-                        dpg.add_text("Edit: ")
+                    with dpg.group(horizontal=True, tag="_brush"):
+                        dpg.add_text("Brush: ")
 
-                        def callback_reset(sender, app_data):
-                            self.state = STATE_PREVIEW
-                            dpg.configure_item(
-                                "_button_train", label="edit")
-                            self.trainer.model.load_state_dict(self.teacher_trainer.model.state_dict())
-                            if self.trainer.ema is not None and self.teacher_trainer.ema is not None:
-                                self.trainer.ema.load_state_dict(self.teacher_trainer.ema.state_dict())
-                                print("[INFO] EMA loaded")
+                        # def callback_reset(sender, app_data):
+                        #     self.state = STATE_PREVIEW
+                        #     self.need_update = True
+                        #     dpg.configure_item(
+                        #         "_button_brush", label="paint")
+                        #     self.trainer.model.load_state_dict(self.teacher_trainer.model.state_dict())
+                        #     if self.trainer.ema is not None and self.teacher_trainer.ema is not None:
+                        #         self.trainer.ema.load_state_dict(self.teacher_trainer.ema.state_dict())
+                        #         print("[INFO] EMA loaded")
 
                         def callback_brush(sender, app_data):
-                            if self.state == STATE_PREVIEW:
+                            if self.state != STATE_BRUSH:
                                 self.state = STATE_BRUSH
                                 self.brush_mask = np.zeros((self.H, self.W, 1), dtype=np.uint8)
                                 dpg.configure_item(
-                                    "_button_train", label="start")
-                                # dpg.add_button(label="reset", )
-                            elif self.state == STATE_BRUSH:
-                                self.state = STATE_TRAIN
-                                dpg.configure_item(
-                                    "_button_train", label="stop")
+                                    "_button_brush", label="reset")
                             else:
                                 self.state = STATE_PREVIEW
                                 dpg.configure_item(
-                                    "_button_train", label="edit")
+                                    "_button_brush", label="paint")
+                                self.brush_mask = np.zeros((self.H, self.W, 1), dtype=np.uint8)
+                                # dpg.add_button(label="reset", )
+                            # elif self.state == STATE_BRUSH:
+                            #     brush_pos = self.get_mask_pos() # (N, 3)
+                            #     brush_config = dict(raw=brush_pos, rgb=self.brush_color, **self.brush_config)
+                            #     self.trainer.model.init_mapper(self.opt.workspace, brush_config)
+                            #     self.teacher_trainer.model.init_mapper(self.opt.workspace, brush_config)
+                            #     self.trainer.init_pretraining(epochs=self.opt.pretraining_epochs,
+                            #         local_point_step=self.opt.pretraining_local_point_step,
+                            #         local_angle_step=self.opt.pretraining_local_angle_step,
+                            #         surrounding_point_step=self.opt.pretraining_surrounding_point_step,
+                            #         surrounding_angle_step=self.opt.pretraining_surrounding_angle_step,
+                            #         surrounding_bounds_extend=self.opt.pretraining_surrounding_bounds_extend,
+                            #         global_point_step=self.opt.pretraining_global_point_step,
+                            #         global_angle_step=self.opt.pretraining_global_angle_step,
+                            #         batch_size=self.opt.pretraining_batch_size,
+                            #         lr=self.opt.pretraining_lr)
+                            #     torch.cuda.synchronize()
+                            #     self.train_recorder.record()
+                            #     self.state = STATE_TRAIN
+                            #     self.is_pretraining = True
+                            #     dpg.configure_item(
+                            #         "_button_brush", label="stop")
+                            # else:
+                            #     self.state = STATE_PREVIEW
+                            #     dpg.configure_item(
+                            #         "_button_brush", label="edit")
                             self.need_update = True
 
+                        def callback_save_json(sender, app_data):
+                            if not self.state == STATE_BRUSH:
+                                return
+                            brush_pos = self.get_mask_pos().tolist() # (N, 3)
+                            if len(brush_pos) == 0:
+                                return
+                            brush_config = dict(raw=brush_pos, rgb=self.brush_color.tolist(), **self.brush_config)
+                            with open(os.path.join(self.opt.seal_config, 'seal.json'), 'w') as f:
+                                json.dump(brush_config, f, indent=2)
+
                         dpg.add_button(
-                            label="edit", tag="_button_train", callback=callback_brush)
+                            label="paint", tag="_button_brush", callback=callback_brush)
+                        # dpg.add_button(
+                        #     label="reset", tag="_button_brush_reset", callback=callback_reset)
                         dpg.add_button(
-                            label="reset", tag="_button_reset", callback=callback_reset)
-                        dpg.bind_item_theme("_button_train", theme_button)
-                        dpg.bind_item_theme("_button_reset", theme_button)
+                            label="json", tag="_button_brush_json", callback=callback_save_json)
+                        dpg.bind_item_theme("_button_brush", theme_button)
+                        # dpg.bind_item_theme("_button_brush_reset", theme_button)
+                        dpg.bind_item_theme("_button_brush_json", theme_button)
 
                     # save ckpt
                     with dpg.group(horizontal=True):
@@ -315,6 +440,8 @@ class NeRFGUI:
 
                     dpg.add_slider_int(label="Brush Thickness", min_value=1, max_value=50, format="%d pix", default_value=self.brush_thickness, callback=callback_set_thickness)
 
+
+
                     # save mesh
                     # with dpg.group(horizontal=True):
                     #     dpg.add_text("Marching Cubes: ")
@@ -337,7 +464,7 @@ class NeRFGUI:
                     #     dpg.add_text("", tag="_log_train_log")
 
             # rendering options
-            with dpg.collapsing_header(label="Options", default_open=True):
+            with dpg.collapsing_header(label="Options", default_open=False):
 
                 # dynamic rendering resolution
                 with dpg.group(horizontal=True):
@@ -435,6 +562,9 @@ class NeRFGUI:
                     dpg.add_text(str(self.cam.pose), tag="_log_pose")
 
         # register camera handler
+        def get_mouse_pos_int():
+            mx, my = dpg.get_mouse_pos(local=False)
+            return (int(mx), int(my))
 
         def callback_camera_drag_rotate(sender, app_data):
 
@@ -452,9 +582,6 @@ class NeRFGUI:
                     dpg.set_value("_log_pose", str(self.cam.pose))
             
             else:
-                def get_mouse_pos_int():
-                    mx, my = dpg.get_mouse_pos(local=False)
-                    return (int(mx), int(my))
                 if not self.brushing:
                     # mx, my = self.brush_pos
                     self.brushing = True
@@ -491,14 +618,15 @@ class NeRFGUI:
             if self.debug:
                 dpg.set_value("_log_pose", str(self.cam.pose))
 
-        # def callback_down_brush(sender, app_data):
-        #     if not dpg.is_item_focused("_primary_window") or self.state != STATE_BRUSH:
-        #         return
-        #     if not self.brushing
-        #     self.brushing = True
-        #     print(app_data)
-        #     print("######")
-        # #     self.last_pos = dpg.get_mouse_pos()
+        def callback_down_brush(sender, app_data):
+            if not dpg.is_item_focused("_primary_window") or self.state != STATE_BRUSH:
+                return
+            # if not self.brushing
+            self.brushing = True
+            self.brush_pos = get_mouse_pos_int()
+            # print(app_data)
+            # print("######")
+        #     self.last_pos = dpg.get_mouse_pos()
 
         def callback_release_brush(sender, app_data):
             if not dpg.is_item_focused("_primary_window") or self.state != STATE_BRUSH:
@@ -513,7 +641,7 @@ class NeRFGUI:
             dpg.add_mouse_wheel_handler(callback=callback_camera_wheel_scale)
             dpg.add_mouse_drag_handler(
                 button=dpg.mvMouseButton_Middle, callback=callback_camera_drag_pan)
-            # dpg.add_mouse_down_handler(button=dpg.mvMouseButton_Left, callback=callback_down_brush)
+            dpg.add_mouse_down_handler(button=dpg.mvMouseButton_Left, callback=callback_down_brush)
             dpg.add_mouse_release_handler(button=dpg.mvMouseButton_Left, callback=callback_release_brush)
 
         dpg.create_viewport(title='torch-ngp', width=self.W,
@@ -550,7 +678,8 @@ class NeRFGUI:
 
         while dpg.is_dearpygui_running():
             # update texture every frame
-            if self.training:
+            # if self.training:
+            if self.state == STATE_TRAIN:
                 self.train_step()
             self.test_step()
             dpg.render_dearpygui_frame()

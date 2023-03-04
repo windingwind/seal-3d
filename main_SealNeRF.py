@@ -4,7 +4,7 @@ import argparse
 
 from SealNeRF.types import BackBoneTypes, CharacterTypes
 from SealNeRF.provider import SealDataset, SealRandomDataset
-from SealNeRF.gui import NeRFGUI
+# from SealNeRF.gui import NeRFGUI
 from SealNeRF.trainer import get_trainer
 from SealNeRF.network import get_network
 from nerf.utils import seed_everything, PSNRMeter, LPIPSMeter
@@ -83,7 +83,7 @@ if __name__ == '__main__':
 
     # seal options
     # pretraining strategy
-    parser.add_argument('--pretraining_epochs', type=int, default=150,
+    parser.add_argument('--pretraining_epochs', type=int, default=100,
                         help="num epochs for local pretraining")
     # local
     parser.add_argument('--pretraining_local_point_step', type=float, default=0.001,
@@ -98,7 +98,7 @@ if __name__ == '__main__':
     parser.add_argument('--pretraining_surrounding_bounds_extend', type=float, default=0.1,
                         help="pretraining bounds extend")
     # global
-    parser.add_argument('--pretraining_global_point_step', type=float, default=0.05,
+    parser.add_argument('--pretraining_global_point_step', type=float, default=-1,
                         help="pretraining point sampling step")
     parser.add_argument('--pretraining_global_angle_step', type=float, default=45,
                         help="pretraining angle sampling step in degree")
@@ -131,7 +131,7 @@ if __name__ == '__main__':
 
     # teacher model
     parser.add_argument('--teacher_workspace', type=str,
-                        default='workspace', help="teacher trainer workspace")
+                        default='', help="teacher trainer workspace")
     parser.add_argument('--teacher_ckpt', type=str, default='latest')
     parser.add_argument('--seal_config', type=str, default='')
 
@@ -141,6 +141,9 @@ if __name__ == '__main__':
                         default=10, help="eval_count")
 
     opt = parser.parse_args()
+
+    if not opt.teacher_workspace:
+        opt.teacher_workspace = opt.workspace
 
     if opt.O:
         opt.fp16 = True
@@ -164,6 +167,8 @@ if __name__ == '__main__':
     # else:
     #     # from nerf.network import NeRFNetwork
     #     from SealNeRF.network import SelaNeRFStudentNetwork
+    if not opt.gui and not opt.seal_config:
+        raise ValueError("Requires seal config path")
 
     print(opt)
 
@@ -178,7 +183,8 @@ if __name__ == '__main__':
         density_thresh=opt.density_thresh,
         bg_radius=opt.bg_radius,
     )
-    model.init_mapper(opt.seal_config)
+    if not opt.gui:
+        model.init_mapper(opt.seal_config)
     print(model)
 
     teacher_model = TeacherNetwork(
@@ -190,7 +196,8 @@ if __name__ == '__main__':
         density_thresh=opt.density_thresh,
         bg_radius=opt.bg_radius,
     )
-    teacher_model.init_mapper(opt.seal_config)
+    if not opt.gui:
+        teacher_model.init_mapper(opt.seal_config)
     teacher_model.train(False)
     print(teacher_model)
 
@@ -207,6 +214,7 @@ if __name__ == '__main__':
                                   criterion=criterion, fp16=opt.fp16, metrics=metrics, use_checkpoint=opt.ckpt)
 
         if opt.gui:
+            from nerf.gui import NeRFGUI
             gui = NeRFGUI(opt, trainer)
             gui.render()
 
@@ -238,16 +246,17 @@ if __name__ == '__main__':
                               device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, ema_decay=0.95,
                               fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.ckpt, eval_interval=opt.eval_interval, eval_count=opt.eval_count, max_keep_ckpt=65535)
 
-        trainer.init_pretraining(epochs=opt.pretraining_epochs,
-                                 local_point_step=opt.pretraining_local_point_step,
-                                 local_angle_step=opt.pretraining_local_angle_step,
-                                 surrounding_point_step=opt.pretraining_surrounding_point_step,
-                                 surrounding_angle_step=opt.pretraining_surrounding_angle_step,
-                                 surrounding_bounds_extend=opt.pretraining_surrounding_bounds_extend,
-                                 global_point_step=opt.pretraining_global_point_step,
-                                 global_angle_step=opt.pretraining_global_angle_step,
-                                 batch_size=opt.pretraining_batch_size,
-                                 lr=opt.pretraining_lr)
+        if not opt.gui:
+            trainer.init_pretraining(epochs=opt.pretraining_epochs,
+                                    local_point_step=opt.pretraining_local_point_step,
+                                    local_angle_step=opt.pretraining_local_angle_step,
+                                    surrounding_point_step=opt.pretraining_surrounding_point_step,
+                                    surrounding_angle_step=opt.pretraining_surrounding_angle_step,
+                                    surrounding_bounds_extend=opt.pretraining_surrounding_bounds_extend,
+                                    global_point_step=opt.pretraining_global_point_step,
+                                    global_angle_step=opt.pretraining_global_angle_step,
+                                    batch_size=opt.pretraining_batch_size,
+                                    lr=opt.pretraining_lr)
 
         if opt.custom_pose:
             train_dataset = SealRandomDataset(
@@ -260,7 +269,8 @@ if __name__ == '__main__':
                 opt, device=device, type='train').dataloader()
 
         if opt.gui:
-            gui = NeRFGUI(opt, trainer, train_loader)
+            from SealNeRF.gui import NeRFGUI
+            gui = NeRFGUI(opt, teacher_trainer, trainer, train_loader)
             gui.render()
 
         else:
