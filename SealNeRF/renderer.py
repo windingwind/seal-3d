@@ -18,18 +18,31 @@ class SealNeRFRenderer(NeRFRenderer):
         self.density_bitfield_origin = None
         self.density_bitfield_hacked = False
 
-    def init_mapper(self, config_dir: str, config_dict: dict = None, config_file: str = 'seal.json'):
-        self.seal_mapper = get_seal_mapper(config_dir, config_dict, config_file)
-        coords_min, coords_max = torch.floor(
-            ((self.seal_mapper.map_data['force_fill_bound'] + self.bound) / self.bound / 2) * self.grid_size)
-        X, Y, Z = torch.meshgrid(torch.arange(coords_min[0], coords_max[0]),
-                                 torch.arange(coords_min[1], coords_max[1]),
-                                 torch.arange(coords_min[2], coords_max[2]))
-        coords = torch.stack([X, Y, Z], dim=-1).reshape(-1, 3)
-        self.force_fill_grid_indices = raymarching.morton3D(
-            coords).long()  # [N]
-
-        self.force_fill_bitfield_indices = self.force_fill_grid_indices // 8
+    def init_mapper(self, config_dir: str = '', config_dict: dict = None, config_file: str = 'seal.json', mapper = None):
+        if mapper is None:
+            self.seal_mapper = get_seal_mapper(config_dir, config_dict, config_file)
+        else:
+            self.seal_mapper = mapper
+        # B, 2, 3 or 2, 3
+        bounds: torch.Tensor = self.seal_mapper.map_data['force_fill_bound']
+        if bounds.ndim == 2:
+            bounds = bounds[None]
+        grid_indices = []
+        bitfield_indices = []
+        for i in range(bounds.shape[0]):
+            coords_min, coords_max = torch.floor(
+                ((bounds[i] + self.bound) / self.bound / 2) * self.grid_size)
+            X, Y, Z = torch.meshgrid(torch.arange(coords_min[0], coords_max[0]),
+                                    torch.arange(coords_min[1], coords_max[1]),
+                                    torch.arange(coords_min[2], coords_max[2]))
+            coords = torch.stack([X, Y, Z], dim=-1).reshape(-1, 3)
+            current_grid_indices = raymarching.morton3D(
+                coords).long()  # [N]
+            current_bitfield_indices = current_grid_indices // 8
+            grid_indices.append(current_grid_indices)
+            bitfield_indices.append(current_bitfield_indices)
+        self.force_fill_grid_indices = torch.concat(grid_indices)
+        self.force_fill_bitfield_indices = torch.concat(bitfield_indices)
 
     def update_extra_state(self, decay=0.95, S=128):
         # self.force_fill_grids()
