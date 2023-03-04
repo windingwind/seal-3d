@@ -412,9 +412,9 @@ class SealAnchorMapper(SealMapper):
         return points_copy, dirs, valid_mask
 
 
-def get_seal_mapper(config_path: str, config_dict: dict = None) -> SealMapper:
+def get_seal_mapper(config_path: str, config_dict: dict = None, config_file: str = 'seal.json') -> SealMapper:
     if config_dict is None:
-        with open(os.path.join(config_path, 'seal.json'), 'r') as f:
+        with open(os.path.join(config_path, config_file), 'r') as f:
             config_dict = json5.load(f)
     if config_dict['type'] == 'bbox':
         return SealBBoxMapper(config_path, config_dict)

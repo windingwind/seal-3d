@@ -42,6 +42,7 @@ def trainer_constructor(base, backbone: BackBoneTypes):
         'freeze_mlp': freeze_mlp,
         'set_lr': set_lr,
         'proxy_truth': proxy_truth,
+        'train_gui': train_gui,
         '_backbone': backbone
     })
     Trainer._self = Trainer
@@ -67,6 +68,7 @@ def init(self: trainer_types, name, opt, student_model, teacher_trainer, proxy_t
     self.proxy_train = proxy_train
     self.proxy_eval = proxy_eval
     self.proxy_test = proxy_test
+    self.is_pretraining = False
 
     self.cache_gt = cache_gt
 
@@ -130,6 +132,7 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
                 'color': gt_color.detach(),
                 'steps': local_steps
             }
+            self.is_pretraining = True
 
         # prepare surrounding data and gt
         if surrounding_point_step > 0:
@@ -251,9 +254,12 @@ def train(self: trainer_types, train_loader, valid_loader, max_epochs):
     for epoch in range(self.epoch + 1, max_epochs + 1):
         self.epoch = epoch
 
-        is_pretraining = epoch - first_epoch < self.pretraining_epochs
+        # is_pretraining = epoch - first_epoch < self.pretraining_epochs
+        if self.is_pretraining and epoch - first_epoch >= self.pretraining_epochs:
+            self.is_pretraining = False
+            self.log(f"[INFO] Pretraining time: {sum(time_inspector['pretraining']):.4f}s")
 
-        if is_pretraining:
+        if self.is_pretraining:
             t = time.time()
             # skip checkpoint saving for pretraining
             self.pretrain_one_epoch()
@@ -533,3 +539,82 @@ def freeze_module(module: Union[torch.nn.ParameterList, torch.nn.ModuleList, tor
             module[i].requires_grad_(not freeze)
     elif isinstance(module, torch.nn.Module):
         module.requires_grad_(not freeze)
+
+
+def train_gui(self, train_loader, step=16, is_pretraining=False):
+
+    # print(is_pretraining)
+
+    self.model.train()
+
+    # mark untrained grid
+    # if self.global_step == 0:
+    #     self.model.mark_untrained_grid(train_loader._data.poses, train_loader._data.intrinsics)
+
+    total_loss = torch.tensor([0], dtype=torch.float32, device=self.device)
+
+    if is_pretraining:
+        st = time.time()
+        torch.cuda.synchronize()
+        for _ in range(step):
+            self.pretrain_one_epoch(True)
+        ed = time.time()
+        torch.cuda.synchronize()
+        self.log(f"[INFO]Pretraining epoch x{step} time: {ed-st:.4f}s")
+        return {
+            'loss': 0.0,
+            'lr': self.optimizer.param_groups[0]['lr']
+        }
+    
+    self.freeze_mlp(False)
+    self.set_lr(-1)
+    
+    loader = iter(train_loader)
+
+    for _ in range(step):
+        
+        # mimic an infinite loop dataloader (in case the total dataset is smaller than step)
+        try:
+            data = next(loader)
+        except StopIteration:
+            loader = iter(train_loader)
+            data = next(loader)
+
+        # update grid every 16 steps
+        if self.model.cuda_ray and self.global_step % self.opt.update_extra_interval == 0:
+            with torch.cuda.amp.autocast(enabled=self.fp16):
+                self.model.update_extra_state()
+        
+        self.global_step += 1
+
+        self.optimizer.zero_grad()
+
+        with torch.cuda.amp.autocast(enabled=self.fp16):
+            preds, truths, loss = self.train_step(data)
+        
+        self.scaler.scale(loss).backward()
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
+        
+        if self.scheduler_update_every_step:
+            self.lr_scheduler.step()
+
+        total_loss += loss.detach()
+
+    if self.ema is not None:
+        self.ema.update()
+
+    average_loss = total_loss.item() / step
+
+    if not self.scheduler_update_every_step:
+        if isinstance(self.lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+            self.lr_scheduler.step(average_loss)
+        else:
+            self.lr_scheduler.step()
+
+    outputs = {
+        'loss': average_loss,
+        'lr': self.optimizer.param_groups[0]['lr'],
+    }
+    
+    return outputs

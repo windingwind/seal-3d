@@ -18,8 +18,8 @@ class SealNeRFRenderer(NeRFRenderer):
         self.density_bitfield_origin = None
         self.density_bitfield_hacked = False
 
-    def init_mapper(self, config_dir: str, config_dict: dict = None):
-        self.seal_mapper = get_seal_mapper(config_dir, config_dict)
+    def init_mapper(self, config_dir: str, config_dict: dict = None, config_file: str = 'seal.json'):
+        self.seal_mapper = get_seal_mapper(config_dir, config_dict, config_file)
         coords_min, coords_max = torch.floor(
             ((self.seal_mapper.map_data['force_fill_bound'] + self.bound) / self.bound / 2) * self.grid_size)
         X, Y, Z = torch.meshgrid(torch.arange(coords_min[0], coords_max[0]),
@@ -304,7 +304,7 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
                     weights_sum, depth, image = raymarching.composite_rays_train(
                         sigmas[k], rgbs[k], deltas, rays, T_thresh)
                     image = image + (1 - weights_sum).unsqueeze(-1) * bg_color
-                    depth = torch.clamp(depth - nears, min=0) / (fars - nears)
+                    # depth = torch.clamp(depth - nears, min=0) / (fars - nears)
                     images.append(image.view(*prefix, 3))
                     depths.append(depth.view(*prefix))
 
@@ -316,7 +316,7 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
                 weights_sum, depth, image = raymarching.composite_rays_train(
                     sigmas, rgbs, deltas, rays, T_thresh)
                 image = image + (1 - weights_sum).unsqueeze(-1) * bg_color
-                depth = torch.clamp(depth - nears, min=0) / (fars - nears)
+                # depth = torch.clamp(depth - nears, min=0) / (fars - nears)
                 image = image.view(*prefix, 3)
                 depth = depth.view(*prefix)
 
@@ -382,7 +382,7 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
                 step += n_step
 
             image = image + (1 - weights_sum).unsqueeze(-1) * bg_color
-            depth = torch.clamp(depth - nears, min=0) / (fars - nears)
+            # depth = torch.clamp(depth - nears, min=0) / (fars - nears)
             image = image.view(*prefix, 3)
             depth = depth.view(*prefix)
 

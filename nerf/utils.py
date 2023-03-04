@@ -13,6 +13,7 @@ import pandas as pd
 import time
 from datetime import datetime
 
+os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
 import cv2
 import matplotlib.pyplot as plt
 
@@ -124,7 +125,8 @@ def get_rays(poses, intrinsics, H, W, N=-1, error_map=None, patch_size=1):
     xs = (i - cx) / fx * zs
     ys = (j - cy) / fy * zs
     directions = torch.stack((xs, ys, zs), dim=-1)
-    directions = directions / torch.norm(directions, dim=-1, keepdim=True)
+    rays_d_norm = torch.norm(directions, dim=-1, keepdim=True)
+    directions = directions / rays_d_norm
     rays_d = directions @ poses[:, :3, :3].transpose(-1, -2) # (B, N, 3)
 
     rays_o = poses[..., :3, 3] # [B, 3]
@@ -132,6 +134,7 @@ def get_rays(poses, intrinsics, H, W, N=-1, error_map=None, patch_size=1):
 
     results['rays_o'] = rays_o
     results['rays_d'] = rays_d
+    results['rays_d_norm'] = rays_d_norm
 
     return results
 
@@ -617,8 +620,8 @@ class Trainer(object):
 
             self.train_one_epoch(train_loader)
 
-            if self.workspace is not None and self.local_rank == 0:
-                self.save_checkpoint(full=True, best=False)
+            # if self.workspace is not None and self.local_rank == 0:
+            #     self.save_checkpoint(full=True, best=False)
 
             if self.epoch % self.eval_interval == 0:
                 self.evaluate_one_epoch(valid_loader)
@@ -747,7 +750,7 @@ class Trainer(object):
 
     
     # [GUI] test on a single image
-    def test_gui(self, pose, intrinsics, W, H, bg_color=None, spp=1, downscale=1):
+    def test_gui(self, pose, intrinsics, W, H, bg_color=None, spp=1, downscale=1, return_pos=False):
         
         # render resolution (may need downscale to for better frame rate)
         rH = int(H * downscale)
@@ -787,14 +790,29 @@ class Trainer(object):
 
         if self.opt.color_space == 'linear':
             preds = linear_to_srgb(preds)
+        
+        if return_pos:
+            unnorm_d = rays['rays_d'].view(H, W, 3) * rays['rays_d_norm'].view(H, W, 1)
+            preds_pos = rays['rays_o'].view(H, W, 3) + preds_depth.view(H, W, 1) * unnorm_d
+            # preds_pos = preds_pos.view(H, W, 3)
+            preds_pos = preds_pos.detach().cpu().numpy()
+            # cv2.imwrite("pos.exr", preds_pos)
+            # cv2.imwrite("rays_o.exr", rays['rays_o'].view(H, W, 3).detach().cpu().numpy())
+            # cv2.imwrite("rays_d_norm.exr", rays['rays_d_norm'].view(H, W, 1).detach().cpu().numpy())
+            # cv2.imwrite("rays_d.exr", rays['rays_d'].view(H, W, 3).detach().cpu().numpy())
+            # cv2.imwrite("rays_d_unnorm.exr", unnorm_d.detach().cpu().numpy())
 
         pred = preds[0].detach().cpu().numpy()
         pred_depth = preds_depth[0].detach().cpu().numpy()
+
 
         outputs = {
             'image': pred,
             'depth': pred_depth,
         }
+        if return_pos:
+            outputs['pos'] = preds_pos
+            # cv2.imwrite("depth.exr", pred_depth)
 
         return outputs
 
