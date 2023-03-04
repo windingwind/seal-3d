@@ -162,18 +162,6 @@ if __name__ == '__main__':
     # else:
     #     from tensoRF.network import NeRFNetwork
 
-    model = StudentNetwork(
-        resolution=[opt.resolution0] * 3,
-        bound=opt.bound,
-        cuda_ray=opt.cuda_ray,
-        density_scale=1,
-        min_near=opt.min_near,
-        density_thresh=opt.density_thresh,
-        bg_radius=opt.bg_radius,
-    )
-    model.init_mapper(opt.seal_config)
-    print(model)
-
     teacher_model = TeacherNetwork(
         resolution=[opt.resolution0] * 3,
         bound=opt.bound,
@@ -186,6 +174,19 @@ if __name__ == '__main__':
     teacher_model.init_mapper(opt.seal_config)
     teacher_model.train(False)
     print(teacher_model)
+
+    model = StudentNetwork(
+        resolution=[opt.resolution0] * 3,
+        bound=opt.bound,
+        cuda_ray=opt.cuda_ray,
+        density_scale=1,
+        min_near=opt.min_near,
+        density_thresh=opt.density_thresh,
+        bg_radius=opt.bg_radius,
+    )
+    if not opt.gui:
+        model.init_mapper(mapper=teacher_model.seal_mapper)
+    print(model)
 
     criterion = torch.nn.MSELoss(reduction='none')
 
