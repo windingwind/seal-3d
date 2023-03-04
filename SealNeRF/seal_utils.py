@@ -32,7 +32,6 @@ class SealMapper:
         self.map_meshes: Meshes = None
         self.map_triangles: torch.Tensor = None
 
-
     def map_to_origin(self, points: torch.Tensor, dirs: torch.Tensor = None):
         """
         @virtual
@@ -85,7 +84,7 @@ class SealMapper:
         early terminate computation of points outside bbox
         """
         bound_mask = torch.logical_and(points.all(1), torch.logical_and(
-            self.map_data['map_bound'][1] >= points, points >= self.map_data['map_bound'][0]).all(1))
+            self.map_data['map_bound'][1] > points, points > self.map_data['map_bound'][0]).all(1))
         if not bound_mask.any():
             return bound_mask
         shape_mask = points_in_mesh(points[bound_mask], self.map_triangles)
@@ -102,6 +101,7 @@ class SealBBoxMapper(SealMapper):
     transform: [4,4]
     scale: [3]
     """
+
     def __init__(self, config_path: str, seal_config: object) -> None:
         super().__init__()
 
@@ -207,7 +207,7 @@ class SealBrushMapper(SealMapper):
     def __init__(self, config_path: str, seal_config: object) -> None:
         super().__init__()
 
-        points = seal_config['raw']
+        points = np.asarray(seal_config['raw'])
         # compute plane
         plane = Plane.best_fit(points)
         # compute normal
@@ -216,17 +216,25 @@ class SealBrushMapper(SealMapper):
 
         # generate force filled grids bound
         normal_expand = plane.normal * seal_config['brushPressure']
+        projected_points = project_points(
+            torch.from_numpy(plane.normal), torch.from_numpy(plane.point), torch.from_numpy(points))
         if seal_config['brushType'] == 'line':
             self.to_mesh = get_trimesh_box(np.vstack([points + 2 * normal_expand, points - seal_config['brushDepth'] * normal_expand])
                                            )
         else:
+            # project to plane so the mesh is smooth
             self.to_mesh = get_trimesh_fit(
-                points, normal_expand, [-seal_config['brushDepth'], 2])
+                projected_points.numpy(),
+                normal_expand, [-seal_config['brushDepth'], 2])
         self.to_mesh.export(os.path.join(config_path, 'to.obj'))
 
         self.map_meshes = trimesh_to_pytorch3d(self.to_mesh)
         self.map_triangles = self.map_meshes.verts_packed()[
             self.map_meshes.faces_packed()]
+
+        border_points_mask = mesh_surface_points_mask(
+            self.map_triangles.to(self.dtype), projected_points.to(self.dtype))
+        # trimesh.PointCloud(points[border_points_mask]).export('./tmp/border.ply')
 
         self.map_data = {
             'force_fill_bound': self.to_mesh.bounds,
@@ -236,6 +244,7 @@ class SealBrushMapper(SealMapper):
                 self.to_mesh.bounds[1] - self.to_mesh.bounds[0], 2) * 10,
             'normal_expand': normal_expand,
             'center': plane.point,
+            'border_points': projected_points[border_points_mask],
             'attenuation_distance': seal_config['attenuationDistance'],
             'attenuation_mode': seal_config['attenuationMode']
         }
@@ -258,16 +267,21 @@ class SealBrushMapper(SealMapper):
 
         N_points, N_dims = inner_points.shape
 
-        brush_border_distance = points_mesh_distance(
-            inner_points, self.map_meshes, self.map_triangles)
+        projected_points = project_points(
+            self.map_data['normal_expand'], self.map_data['center'], inner_points)
+        brush_border_distance = torch.cdist(
+            projected_points, self.map_data['border_points']).min(1)[0]
+        # brush_border_distance = points_mesh_distance(
+        #     projected_points, self.map_meshes, self.map_triangles)
 
         mode = self.map_data['attenuation_mode']
         if mode == 'linear':
             points_mapped = inner_points - self.map_data['normal_expand']
             # N_points, 3
-            points_compensation = (torch.abs(self.map_data['attenuation_distance'] - brush_border_distance) /
+            distance_filter = self.map_data['attenuation_distance'] > brush_border_distance
+            points_compensation = (torch.abs(self.map_data['attenuation_distance'] - brush_border_distance[distance_filter]) /
                                    self.map_data['attenuation_distance'])[None].T @ self.map_data['normal_expand'][None]
-            points_mapped += points_compensation
+            points_mapped[distance_filter] += points_compensation
         elif mode == 'dry':
             # for dry brush, no space mapping is applied.
             points_mapped = inner_points
@@ -352,7 +366,7 @@ class SealAnchorMapper(SealMapper):
             return points, dirs, map_mask
 
         # project points to anchor sphere
-        projected_points = self.project_points(
+        projected_points = project_points(
             self.map_data['v_h'], self.map_data['v_anchor'], points)
         v_points_to_plane = projected_points - points
         points_plane_dist = torch.norm(v_points_to_plane, 2, 1)
@@ -397,12 +411,6 @@ class SealAnchorMapper(SealMapper):
 
         return points_copy, dirs, valid_mask
 
-    def project_points(self, plane_norm: torch.Tensor, plane_point: torch.Tensor, target_points: torch.Tensor):
-        v_target_to_plane = target_points - plane_point  # N*3
-        v_projection = (v_target_to_plane @ plane_norm).unsqueeze(1) / \
-            (plane_norm @ plane_norm) * plane_norm  # N*3
-        return target_points - v_projection
-
 
 def get_seal_mapper(config_path: str, config_dict: dict = None) -> SealMapper:
     if config_dict is None:
@@ -444,7 +452,6 @@ def get_trimesh_fit(points, normal, growth=[-0.3, 1]) -> trimesh.Trimesh:
 
     generated_mesh = trimesh.Trimesh(np.concatenate(
         [points + normal * growth[0], points + normal * growth[1]]), faces)
-    generated_mesh.show()
 
     o3d_mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(
         generated_mesh.vertices), o3d.utility.Vector3iVector(generated_mesh.faces))
@@ -454,7 +461,7 @@ def get_trimesh_fit(points, normal, growth=[-0.3, 1]) -> trimesh.Trimesh:
         voxel_size=voxel_size,
         contraction=o3d.geometry.SimplificationContraction.Average)
 
-    return trimesh.Trimesh(np.asarray(simplified_mesh.vertices), np.asarray(simplified_mesh.triangles)).show()
+    return trimesh.Trimesh(np.asarray(simplified_mesh.vertices), np.asarray(simplified_mesh.triangles))
 
 
 def trimesh_to_pytorch3d(mesh: trimesh.Trimesh) -> Meshes:
@@ -542,6 +549,33 @@ def points_mesh_distance(points: torch.Tensor, meshes: Meshes, tris: torch.Tenso
     return dists
 
 
+def mesh_surface_points_mask(triangles: torch.Tensor, points: torch.Tensor):
+    # offset_value = np.linalg.norm(points.max(0) - points.min(0), 2) / 100
+    offset_value = 1e-4
+    offsets = torch.from_numpy(np.array([
+        [0, 0, offset_value],
+        [0, 0, -offset_value],
+        [0, offset_value, 0],
+        [0, -offset_value, 0],
+        [offset_value, 0, 0],
+        [-offset_value, 0, 0]
+    ])).to(points.device, points.dtype)
+    masks = torch.sum(torch.stack([~points_in_mesh(
+        points + offsets[i], triangles) for i in range(offsets.shape[0])]), 0) > 0
+    return masks
+
+
+def project_points(plane_norm: torch.Tensor, plane_point: torch.Tensor, target_points: torch.Tensor):
+    """
+    project 3d points to a plane defined by normal and plane point
+    returns: projected points
+    """
+    v_target_to_plane = target_points - plane_point  # N*3
+    v_projection = (v_target_to_plane @ plane_norm).unsqueeze(1) / \
+        (plane_norm @ plane_norm) * plane_norm  # N*3
+    return target_points - v_projection
+
+
 def modify_hsv(rgb: torch.Tensor, modification: torch.Tensor):
     """
     rgb -> hsv + mod -> rgb
@@ -558,7 +592,6 @@ def modify_hsv(rgb: torch.Tensor, modification: torch.Tensor):
 
 def modify_rgb(rgb: torch.Tensor, modification: torch.Tensor):
     """
-    TODO: fix color bugs and keep lightness
     the original color is not correct makes the converted hsl value meaningless
     """
     N = rgb.shape[0]
@@ -566,7 +599,8 @@ def modify_rgb(rgb: torch.Tensor, modification: torch.Tensor):
         return rgb
     # return modification.repeat(N).view(N, 3).to(rgb.device, rgb.dtype)
     hsl = rgb2hsl_torch(rgb.view(N, 3, 1))
-    hsl_modification = rgb2hsl_torch(modification.view(1, 3, 1)).view(3).to(rgb.device, rgb.dtype)
+    hsl_modification = rgb2hsl_torch(modification.view(
+        1, 3, 1)).view(3).to(rgb.device, rgb.dtype)
     hsl[:, 0, :] = hsl_modification[0]
     hsl[:, 1, :] = hsl_modification[1]
     ret = hsl2rgb_torch(hsl).view(N, 3)
