@@ -10,6 +10,7 @@ import numpy as np
 import dearpygui.dearpygui as dpg
 import cv2
 from scipy.spatial.transform import Rotation as R
+from scipy.ndimage.measurements import label
 from SealNeRF.types import BackBoneTypes, CharacterTypes
 from SealNeRF.provider import SealDataset, SealRandomDataset
 # from SealNeRF.gui import NeRFGUI
@@ -89,15 +90,17 @@ class NeRFGUI:
         self.brush_config = {
             "type": "brush",
             "normal": [0, 1, 0],
-            "brushType": "line",
+            "brushType": [],
             "brushDepth": 1,
             "brushPressure": 0.01,
             "attenuationDistance": 0.02,
             "attenuationMode": "linear"
         }
         self.brush_thickness = 10
+        self.brush_type = "line"
         self.brush_color = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-        self.brush_mask = np.zeros((self.H, self.W, 1), dtype=np.uint8)
+        self.active_mask = np.zeros((self.H, self.W, 1), dtype=np.uint8)
+        self.brush_mask = []
         self.ii, self.jj = np.meshgrid(np.arange(opt.H), np.arange(opt.W), indexing='ij')
         self.ii, self.jj = self.ii[..., np.newaxis], self.jj[..., np.newaxis]
         # self.training = False
@@ -165,26 +168,35 @@ class NeRFGUI:
 
     def prepare_buffer(self, outputs):
         def mix_brush(img, mask, color, alpha=1.0):
-            return np.where(mask, color[np.newaxis,np.newaxis,:] * alpha + img * (1 - alpha), img)
+            mask = np.sum(mask, axis=0)
+            return np.where(mask > 0, color[np.newaxis,np.newaxis,:] * alpha + img * (1 - alpha), img)
             # return np.where(mask, color[np.newaxis,np.newaxis,:], color[np.newaxis,np.newaxis,:])
         if self.mode == 'image':
             if self.state != STATE_BRUSH:
                 return outputs['image']
             else:
-                return mix_brush(outputs['image'], self.brush_mask, self.brush_color)
+                return mix_brush(outputs['image'], self.brush_mask + [self.active_mask], self.brush_color)
         else:
             depth_img = np.expand_dims(outputs['depth'], -1).repeat(3, -1).clamp_max(1)
             if self.state != STATE_BRUSH:
                 return depth_img
             else:
-                return mix_brush(depth_img, self.brush_mask, self.brush_color)
+                return mix_brush(depth_img, self.brush_mask + [self.active_mask], self.brush_color)
     
-    def get_mask_pos(self):
+    # def get_mask_pos(self, cluster=True):
+    #     position = self.teacher_trainer.test_gui(
+    #             self.cam.pose, self.cam.intrinsics, self.W, self.H, self.bg_color, 1, 1, True)['pos']
+    #     if not cluster:
+    #         return position[self.brush_mask[:,:,0] > 0]
+    #     mask = self.brush_mask[:,:,0]
+    #     labeled, ncomponents = label(mask, np.ones((3, 3), dtype=np.uint8))
+    #     self.trainer.log(f"[INFO] {ncomponents} brush components found")
+    #     return [position[labeled == i+1] for i in range(ncomponents)]
+    def get_mask_pos(self, cluster=True):
         position = self.teacher_trainer.test_gui(
                 self.cam.pose, self.cam.intrinsics, self.W, self.H, self.bg_color, 1, 1, True)['pos']
-        return position[self.brush_mask[:,:,0] > 0]
-
-
+        return [position[mask[:,:,0] > 0] for mask in self.brush_mask]
+    
     def test_step(self):
         # TODO: seems we have to move data from GPU --> CPU --> GPU?
 
@@ -291,13 +303,16 @@ class NeRFGUI:
                                 self.state = STATE_PREVIEW
                                 self.config = None
                                 dpg.configure_item(
-                                    "_button_train", label="train")
+                                    "_button_train", label="start")
                                 return
-                            if self.config is None:
+                            if self.state != STATE_BRUSH and self.config is None:
                                 dpg.set_value("_log_train", "No edit configure!")
                             else:
                                 dpg.set_value("_log_train", "")
                                 if self.state == STATE_BRUSH:
+                                    if len(self.brush_mask) == 0:
+                                        dpg.set_value("_log_train", "No edit configure!")
+                                        return
                                     brush_pos = self.get_mask_pos() # (N, 3)
                                     self.config = dict(raw=brush_pos, rgb=self.brush_color, **self.brush_config)
                                 self.trainer.model.init_mapper(self.opt.workspace, self.config)
@@ -320,7 +335,7 @@ class NeRFGUI:
                                 dpg.configure_item(
                                     "_button_train", label="stop")
                         dpg.add_button(
-                            label="train", tag="_button_train", callback=callback_train)
+                            label="start", tag="_button_train", callback=callback_train)
                         dpg.add_text(tag="_log_train")
                         dpg.bind_item_theme("_button_train", theme_button)
 
@@ -346,14 +361,20 @@ class NeRFGUI:
                         def callback_brush(sender, app_data):
                             if self.state != STATE_BRUSH:
                                 self.state = STATE_BRUSH
-                                self.brush_mask = np.zeros((self.H, self.W, 1), dtype=np.uint8)
+                                # self.brush_mask = np.zeros((self.H, self.W, 1), dtype=np.uint8)
+                                self.brush_mask = []
+                                self.active_mask = np.zeros((self.H, self.W, 1), dtype=np.uint8)
+                                self.brush_config['brushType'] = []
                                 dpg.configure_item(
                                     "_button_brush", label="reset")
                             else:
                                 self.state = STATE_PREVIEW
                                 dpg.configure_item(
                                     "_button_brush", label="paint")
-                                self.brush_mask = np.zeros((self.H, self.W, 1), dtype=np.uint8)
+                                # self.brush_mask = np.zeros((self.H, self.W, 1), dtype=np.uint8)
+                                self.brush_mask = []
+                                self.brush_config['brushType'] = []
+                                self.active_mask = np.zeros((self.H, self.W, 1), dtype=np.uint8)
                                 # dpg.add_button(label="reset", )
                             # elif self.state == STATE_BRUSH:
                             #     brush_pos = self.get_mask_pos() # (N, 3)
@@ -385,12 +406,15 @@ class NeRFGUI:
                         def callback_save_json(sender, app_data):
                             if not self.state == STATE_BRUSH:
                                 return
-                            brush_pos = self.get_mask_pos().tolist() # (N, 3)
+                            brush_pos = self.get_mask_pos() # (N, 3)
                             if len(brush_pos) == 0:
                                 return
+                            if isinstance(brush_pos, list):
+                                brush_pos = [x.tolist() for x in brush_pos]
+                            # print(brush_pos)
                             brush_config = dict(raw=brush_pos, rgb=self.brush_color.tolist(), **self.brush_config)
                             with open(os.path.join(self.opt.seal_config, 'seal.json'), 'w') as f:
-                                json.dump(brush_config, f, indent=2)
+                                json5.dump(brush_config, f, indent=2, quote_keys=True)
 
                         dpg.add_button(
                             label="paint", tag="_button_brush", callback=callback_brush)
@@ -427,6 +451,14 @@ class NeRFGUI:
                         dpg.bind_item_theme("_button_override", theme_button)
 
                         dpg.add_text("", tag="_log_ckpt")
+                    
+                    # mode combo
+                    def callback_change_type(sender, app_data):
+                        self.brush_type = app_data
+                        self.need_update = True
+
+                    dpg.add_combo(('line', 'curve'), label='type', tag='_combo_type',
+                                default_value=self.brush_type, callback=callback_change_type)
                     
                     def callback_change_brush(sender, app_data):
                         self.brush_color = np.array(app_data[:3], dtype=np.float32) # only need RGB in [0, 1]
@@ -584,10 +616,13 @@ class NeRFGUI:
             else:
                 if not self.brushing:
                     # mx, my = self.brush_pos
+                    raise AssertionError()
+                    self.brush_mask.append(np.zeros((self.H, self.W, 1), dtype=np.uint8))
                     self.brushing = True
                     # self.brush_mask |= np.sqrt((self.ii - my) ** 2 + (self.jj - mx) ** 2) <= self.brush_thickness
                 else:
-                    self.brush_mask = cv2.line(self.brush_mask, self.brush_pos, get_mouse_pos_int(), (1,), self.brush_thickness)
+                    # self.brush_mask = cv2.line(self.brush_mask, self.brush_pos, get_mouse_pos_int(), (1,), self.brush_thickness)
+                    self.active_mask = cv2.line(self.active_mask, self.brush_pos, get_mouse_pos_int(), (1,), self.brush_thickness)
                 self.brush_pos = get_mouse_pos_int()
                 self.need_update = True
 
@@ -621,19 +656,40 @@ class NeRFGUI:
         def callback_down_brush(sender, app_data):
             if not dpg.is_item_focused("_primary_window") or self.state != STATE_BRUSH:
                 return
-            # if not self.brushing
-            self.brushing = True
-            self.brush_pos = get_mouse_pos_int()
+            if not self.brushing:
+                # self.brush_mask.append(np.zeros((self.H, self.W, 1), dtype=np.uint8))
+                self.active_mask = np.zeros((self.H, self.W, 1), dtype=np.uint8)
+                self.brushing = True
+                print("[INFO] Brushing start")
+                self.brush_pos = get_mouse_pos_int()
             # print(app_data)
             # print("######")
         #     self.last_pos = dpg.get_mouse_pos()
 
         def callback_release_brush(sender, app_data):
-            if not dpg.is_item_focused("_primary_window") or self.state != STATE_BRUSH:
+            if self.state != STATE_BRUSH:
+                return
+            if not dpg.is_item_focused("_primary_window"):
+                self.brushing = False
+                self.active_mask = np.zeros((self.H, self.W, 1), dtype=np.uint8)
+                print("[INFO] Brushing break")
                 return
             self.brushing = False
+            self.brush_mask.append(self.active_mask)
+            self.brush_config['brushType'].append(self.brush_type)
+            print("[INFO] Brushing end")
         #     print(app_data)
         #     print("******")
+
+        def callback_press_b(sender, app_data):
+            # if not dpg.is_item_focused("_primary_window") or self.state != STATE_BRUSH:
+            #     return
+            if self.brush_type == "line":
+                self.brush_type = "curve"
+                dpg.set_value('_combo_type', "curve")
+            else:
+                self.brush_type = "line"
+                dpg.set_value('_combo_type', "line")
         
         with dpg.handler_registry():
             dpg.add_mouse_drag_handler(
@@ -643,6 +699,7 @@ class NeRFGUI:
                 button=dpg.mvMouseButton_Middle, callback=callback_camera_drag_pan)
             dpg.add_mouse_down_handler(button=dpg.mvMouseButton_Left, callback=callback_down_brush)
             dpg.add_mouse_release_handler(button=dpg.mvMouseButton_Left, callback=callback_release_brush)
+            dpg.add_key_press_handler(key=dpg.mvKey_B, callback=callback_press_b)
 
         dpg.create_viewport(title='torch-ngp', width=self.W,
                             height=self.H, resizable=False)

@@ -134,7 +134,7 @@ def get_rays(poses, intrinsics, H, W, N=-1, error_map=None, patch_size=1):
 
     results['rays_o'] = rays_o
     results['rays_d'] = rays_d
-    results['rays_d_norm'] = rays_d_norm
+    # results['rays_d_norm'] = rays_d_norm
 
     return results
 
@@ -792,8 +792,9 @@ class Trainer(object):
             preds = linear_to_srgb(preds)
         
         if return_pos:
-            unnorm_d = rays['rays_d'].view(H, W, 3) * rays['rays_d_norm'].view(H, W, 1)
-            preds_pos = rays['rays_o'].view(H, W, 3) + preds_depth.view(H, W, 1) * unnorm_d
+            # unnorm_d = rays['rays_d'].view(H, W, 3) * rays['rays_d_norm'].view(H, W, 1)
+            # preds_pos = rays['rays_o'].view(H, W, 3) + preds_depth.view(H, W, 1) * unnorm_d
+            preds_pos = rays['rays_o'].view(H, W, 3) + preds_depth.view(H, W, 1) * rays['rays_d'].view(H, W, 3)
             # preds_pos = preds_pos.view(H, W, 3)
             preds_pos = preds_pos.detach().cpu().numpy()
             # cv2.imwrite("pos.exr", preds_pos)
