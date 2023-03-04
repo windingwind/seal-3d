@@ -83,7 +83,7 @@ if __name__ == '__main__':
 
     # seal options
     # pretraining strategy
-    parser.add_argument('--pretraining_epochs', type=int, default=150,
+    parser.add_argument('--pretraining_epochs', type=int, default=100,
                         help="num epochs for local pretraining")
     # local
     parser.add_argument('--pretraining_local_point_step', type=float, default=0.001,
@@ -98,7 +98,7 @@ if __name__ == '__main__':
     parser.add_argument('--pretraining_surrounding_bounds_extend', type=float, default=0.1,
                         help="pretraining bounds extend")
     # global
-    parser.add_argument('--pretraining_global_point_step', type=float, default=0.05,
+    parser.add_argument('--pretraining_global_point_step', type=float, default=-1,
                         help="pretraining point sampling step")
     parser.add_argument('--pretraining_global_angle_step', type=float, default=45,
                         help="pretraining angle sampling step in degree")
