@@ -257,12 +257,14 @@ def train(self: trainer_types, train_loader, valid_loader, max_epochs):
             t = time.time()
             # skip checkpoint saving for pretraining
             self.pretrain_one_epoch()
+            torch.cuda.synchronize()
             time_inspector['pretraining'].append(time.time() - t)
         else:
             self.freeze_mlp(False)
             self.set_lr(-1)
             t = time.time()
             self.train_one_epoch(train_loader)
+            torch.cuda.synchronize()
             time_inspector['training'].append(time.time() - t)
 
             if self.workspace is not None and self.local_rank == 0:
@@ -287,7 +289,6 @@ def pretrain_one_epoch(self: trainer_types, silent=False):
     """
     pretrain one epoch. set silent=True to disable logs to speed up
     """
-    # hardcoded lr. not really necessary.
     self.set_lr(self.pretraining_lr)
 
     if not self.model.density_bitfield_hacked:
@@ -351,8 +352,8 @@ def pretrain_part(self: trainer_types, source_type: str, silent: bool = False):
         self.scaler.step(self.optimizer)
         self.scaler.update()
 
-        if not silent and self.scheduler_update_every_step:
-            self.lr_scheduler.step()
+        # if not silent and self.scheduler_update_every_step:
+        #     self.lr_scheduler.step()
 
         loss_val = loss.item()
         total_loss += loss_val
