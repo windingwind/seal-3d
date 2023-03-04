@@ -388,7 +388,7 @@ def pretrain_step(self: trainer_types, data):
     color_loss = self.pretraining_criterion(
         pred_color, source['color'][data['indices'][0]:data['indices'][1]])
     # hardcoded weight. not really necessary as it is just a pretraining.
-    loss = color_loss * 1000 + sigma_loss
+    loss = color_loss * 1 + sigma_loss
     return loss
 
 
