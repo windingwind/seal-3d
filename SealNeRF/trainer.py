@@ -136,11 +136,18 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
 
         # prepare surrounding data and gt
         if surrounding_point_step > 0:
-            surrounding_bounds = self.teacher_trainer.model.seal_mapper.map_data['force_fill_bound']
-            surrounding_bounds[0] -= surrounding_bounds_extend
-            surrounding_bounds[0] = torch.max(surrounding_bounds[0], self.model.aabb_train[:3])
-            surrounding_bounds[1] += surrounding_bounds_extend
-            surrounding_bounds[1] = torch.min(surrounding_bounds[1], self.model.aabb_train[3:])
+            # (B, 2, 3) or (2, 3)
+            surrounding_bounds: torch.Tensor = self.teacher_trainer.model.seal_mapper.map_data['force_fill_bound']
+            if surrounding_bounds.ndim == 2:
+                surrounding_bounds[0] -= surrounding_bounds_extend
+                surrounding_bounds[0] = torch.max(surrounding_bounds[0], self.model.aabb_train[:3])
+                surrounding_bounds[1] += surrounding_bounds_extend
+                surrounding_bounds[1] = torch.min(surrounding_bounds[1], self.model.aabb_train[3:])
+            else:
+                surrounding_bounds[:, 0] -= surrounding_bounds_extend
+                surrounding_bounds[:, 0] = torch.max(surrounding_bounds[:, 0], self.model.aabb_train[:3])
+                surrounding_bounds[:, 1] += surrounding_bounds_extend
+                surrounding_bounds[:, 1] = torch.min(surrounding_bounds[:, 1], self.model.aabb_train[3:])
             surrounding_points, surrounding_dirs = sample_points(
                 surrounding_bounds, surrounding_point_step, surrounding_angle_step)
             surrounding_points = surrounding_points.to(
@@ -262,7 +269,7 @@ def train(self: trainer_types, train_loader, valid_loader, max_epochs):
         if self.is_pretraining:
             t = time.time()
             # skip checkpoint saving for pretraining
-            self.pretrain_one_epoch(True)
+            self.pretrain_one_epoch()
             torch.cuda.synchronize()
             time_inspector['pretraining'].append(time.time() - t)
         else:
@@ -270,6 +277,7 @@ def train(self: trainer_types, train_loader, valid_loader, max_epochs):
             self.set_lr(-1)
             t = time.time()
             self.train_one_epoch(train_loader)
+            torch.cuda.synchronize()
             time_inspector['training'].append(time.time() - t)
 
             if self.workspace is not None and self.local_rank == 0:
@@ -294,7 +302,6 @@ def pretrain_one_epoch(self: trainer_types, silent=False):
     """
     pretrain one epoch. set silent=True to disable logs to speed up
     """
-    # hardcoded lr. not really necessary.
     self.set_lr(self.pretraining_lr)
 
     if not self.model.density_bitfield_hacked:
@@ -358,8 +365,8 @@ def pretrain_part(self: trainer_types, source_type: str, silent: bool = False):
         self.scaler.step(self.optimizer)
         self.scaler.update()
 
-        if not silent and self.scheduler_update_every_step:
-            self.lr_scheduler.step()
+        # if not silent and self.scheduler_update_every_step:
+        #     self.lr_scheduler.step()
 
         loss_val = loss.item()
         total_loss += loss_val
@@ -437,6 +444,8 @@ def proxy_truth(self: trainer_types, data, all_ray: bool = True, use_cache: bool
     """
     proxy the ground truth RGB from teacher model
     """
+    # avoid OOM
+    torch.cuda.empty_cache()
     # if the model's bitfield is not hacked, do it before infering
     if not self.teacher_trainer.model.density_bitfield_hacked:
         self.teacher_trainer.model.hack_bitfield()
@@ -511,25 +520,33 @@ def test_step(self: trainer_types, data, bg_color=None, perturb=False):
     return super(self._self, self).test_step(data, bg_color, perturb)
 
 
-def sample_points(bounds, point_step=0.005, angle_step=45):
-    coords_min, coords_max = bounds
-    X, Y, Z = torch.meshgrid(torch.arange(coords_min[0], coords_max[0], step=point_step),
-                             torch.arange(
-        coords_min[1], coords_max[1], step=point_step),
-        torch.arange(coords_min[2], coords_max[2], step=point_step))
-    sampled_points = torch.stack(
-        [X, Y, Z], dim=-1).reshape(-1, 3)
+def sample_points(bounds: torch.Tensor, point_step=0.005, angle_step=45):
+    """
+    Sample points per step inside bounds (B, 2, 3) or (2, 3)
+    """
+    if bounds.ndim == 2:
+        bounds = bounds[None]
+    sampled_points = []
+    sampled_dirs = []
+    for i in range(bounds.shape[0]):
+        coords_min, coords_max = bounds[i]
+        X, Y, Z = torch.meshgrid(torch.arange(coords_min[0], coords_max[0], step=point_step),
+                                torch.arange(
+            coords_min[1], coords_max[1], step=point_step),
+            torch.arange(coords_min[2], coords_max[2], step=point_step))
+        sampled_points.append(torch.stack(
+            [X, Y, Z], dim=-1).reshape(-1, 3))
 
-    r_x, r_y, r_z = torch.meshgrid(torch.arange(0, 360, step=angle_step),
-                                   torch.arange(0, 360, step=angle_step),
-                                   torch.arange(0, 360, step=angle_step))
-    eulers = torch.stack([r_x, r_y, r_z], dim=-1).reshape(-1, 3)
-    sampled_dirs = torch.from_numpy(Rotation.from_euler('xyz', eulers.numpy(
-    ), degrees=True).apply(np.array([1-1e-5, 0, 0])))
+        r_x, r_y, r_z = torch.meshgrid(torch.arange(0, 360, step=angle_step),
+                                    torch.arange(0, 360, step=angle_step),
+                                    torch.arange(0, 360, step=angle_step))
+        eulers = torch.stack([r_x, r_y, r_z], dim=-1).reshape(-1, 3)
+        sampled_dirs.append(torch.from_numpy(Rotation.from_euler('xyz', eulers.numpy(
+        ), degrees=True).apply(np.array([1-1e-5, 0, 0]))))
 
     # trimesh.PointCloud(
     #     self.sampled_points.cpu().numpy()).export('tmp/sampled.obj')
-    return sampled_points, sampled_dirs
+    return torch.concat(sampled_points), torch.concat(sampled_dirs)
 
 
 def freeze_module(module: Union[torch.nn.ParameterList, torch.nn.ModuleList, torch.nn.Module], freeze: bool):

@@ -174,19 +174,6 @@ if __name__ == '__main__':
 
     seed_everything(opt.seed)
 
-    model = StudentNetwork(
-        encoding="hashgrid",
-        bound=opt.bound,
-        cuda_ray=opt.cuda_ray,
-        density_scale=1,
-        min_near=opt.min_near,
-        density_thresh=opt.density_thresh,
-        bg_radius=opt.bg_radius,
-    )
-    if not opt.gui:
-        model.init_mapper(opt.seal_config)
-    print(model)
-
     teacher_model = TeacherNetwork(
         encoding="hashgrid",
         bound=opt.bound,
@@ -200,6 +187,19 @@ if __name__ == '__main__':
         teacher_model.init_mapper(opt.seal_config)
     teacher_model.train(False)
     print(teacher_model)
+
+    model = StudentNetwork(
+        encoding="hashgrid",
+        bound=opt.bound,
+        cuda_ray=opt.cuda_ray,
+        density_scale=1,
+        min_near=opt.min_near,
+        density_thresh=opt.density_thresh,
+        bg_radius=opt.bg_radius,
+    )
+    if not opt.gui:
+        model.init_mapper(mapper=teacher_model.seal_mapper)
+    print(model)
 
     criterion = torch.nn.MSELoss(reduction='none')
     #criterion = partial(huber_loss, reduction='none')
