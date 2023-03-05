@@ -19,7 +19,8 @@ class SealMapper:
     the virtual root class of all kinds of seal mappers
     """
 
-    def __init__(self) -> None:
+    def __init__(self, seal_config: dict) -> None:
+        self.config = seal_config
         self.device = 'cpu'
         self.dtype = torch.float32
         # variables in `map_data`:
@@ -27,7 +28,8 @@ class SealMapper:
         # map_bound: for map_mask
         # pose_center: for pose generation
         # pose_radius: for pose generation
-        # hsv?: for color modification
+        # hsv?: for color hsv modification
+        # rgb?: for color rgb modification
         self.map_data = {}
         self.map_meshes: Meshes = None
         self.map_triangles: torch.Tensor = None
@@ -65,24 +67,13 @@ class SealMapper:
         elif not force:
             return
         for k, v in self.map_data.items():
-            if isinstance(v, torch.Tensor):
-                self.map_data[k] = v.to(
-                    device=self.device, dtype=self.dtype)
-            elif isinstance(v, np.ndarray):
-                self.map_data[k] = torch.from_numpy(v).to(
-                    device=self.device, dtype=self.dtype)
-            elif isinstance(v, list):
-                self.map_data[k] = torch.from_numpy(np.asarray(v)).to(
-                    device=self.device, dtype=self.dtype)
-            elif isinstance(v, (float, int)):
-                self.map_data[k] = torch.tensor(
-                    v, device=self.device, dtype=self.dtype)
-        self.map_meshes = self.map_meshes.to(self.device)
-        self.map_triangles = self.map_triangles.to(
-            device=self.device, dtype=self.dtype)
-        if self.map_test_dir is not None:
-            self.map_test_dir = self.map_test_dir.to(
-                device=self.device, dtype=self.dtype)
+            self.map_data[k] = convert_tensor(v, self.device, self.dtype)
+
+        self.map_meshes = convert_tensor(self.map_meshes, self.device)
+        self.map_triangles = convert_tensor(
+            self.map_triangles, self.device, self.dtype)
+        self.map_test_dir = convert_tensor(
+            self.map_test_dir, self.device, self.dtype)
 
     def map_mask(self, points: torch.Tensor) -> torch.BoolTensor:
         """
@@ -115,11 +106,13 @@ class SealBBoxMapper(SealMapper):
     type: bbox
     raw: [N,3] points
     transform: [4,4]
-    scale: [3]
+    scale: [3,]
+    boundType: from | to | both which bbox will be mapped
+    mapSource: [3,] map points in source bbox to a specified point
     """
 
     def __init__(self, config_path: str, seal_config: object) -> None:
-        super().__init__()
+        super().__init__(seal_config)
 
         source_to_target_transform = np.array(seal_config['transform'])
         source_to_target_rotation = np.array(
@@ -131,12 +124,12 @@ class SealBBoxMapper(SealMapper):
             np.array(seal_config['raw']))
         from_center = self.from_mesh.centroid
 
-        # bbox of the target points (points that are to be mapped)
-        self.to_mesh: trimesh.Trimesh = self.from_mesh.copy()
         # apply operations to construct `to_mesh` from `from_mesh`
-        self.to_mesh.apply_translation(-from_center)
-        self.to_mesh.apply_scale(source_to_target_scale)
-        self.to_mesh.apply_translation(from_center)
+        verts = np.array(self.from_mesh.vertices)
+        verts -= from_center
+        verts *= source_to_target_scale
+        verts += from_center
+        self.to_mesh = trimesh.Trimesh(verts, self.from_mesh.faces)
         self.to_mesh.apply_transform(source_to_target_transform)
         to_center = self.to_mesh.centroid
 
@@ -145,13 +138,28 @@ class SealBBoxMapper(SealMapper):
         self.from_mesh.export(os.path.join(config_path, 'from.obj'))
         self.to_mesh.export(os.path.join(config_path, 'to.obj'))
 
-        self.map_meshes = trimesh_to_pytorch3d(self.to_mesh)
+        bound_type = seal_config['boundType'] if 'boundType' in seal_config else 'to'
+
+        bound_mesh_list = [self.to_mesh, self.from_mesh]
+        fill_meshes = Meshes([torch.from_numpy(mesh.vertices) for mesh in bound_mesh_list], [
+            torch.from_numpy(mesh.faces) for mesh in bound_mesh_list])
+        fill_bounds = fill_meshes.get_bounding_boxes().transpose(1, 2)
+
+        if bound_type == 'to':
+            bounds = self.to_mesh.bounds
+            self.map_meshes = trimesh_to_pytorch3d(self.to_mesh)
+        elif bound_type == 'from':
+            bounds = self.from_mesh.bounds
+            self.map_meshes = trimesh_to_pytorch3d(self.from_mesh)
+        elif bound_type == 'both':
+            bounds = fill_bounds
+            self.map_meshes = fill_meshes
         self.map_triangles = self.map_meshes.verts_packed()[
             self.map_meshes.faces_packed()]
 
         self.map_data = {
-            'force_fill_bound': self.to_mesh.bounds,
-            'map_bound': self.to_mesh.bounds,
+            'force_fill_bound': fill_bounds,
+            'map_bound': bounds,
             'pose_center': (from_center + to_center) / 2,
             'pose_radius': np.linalg.norm(from_center - to_center, 2) * 10,
             # 4 * 4
@@ -165,6 +173,10 @@ class SealBBoxMapper(SealMapper):
             self.map_data['hsv'] = seal_config['hsv']
         if 'rgb' in seal_config:
             self.map_data['rgb'] = seal_config['rgb']
+        if 'mapSource' in seal_config and seal_config['mapSource']:
+            self.map_data['empty_bound'] = self.from_mesh.bounds
+            self.map_data['map_source'] = seal_config['mapSource']
+
         self.map_data_conversion(force=True)
 
     @torch.cuda.amp.autocast(enabled=False)
@@ -191,6 +203,12 @@ class SealBBoxMapper(SealMapper):
             self.map_data['rotation'], inner_dirs.T).T if has_dirs else None
         points_copy = points.clone()
         dirs_copy = dirs.clone() if has_dirs else None
+
+        if 'map_source' in self.map_data:
+            source_bound = self.map_data['empty_bound']
+            source_mask = torch.logical_and(
+                source_bound[1] > points, points > source_bound[0]).all(1)
+            points_copy[source_mask] = self.map_data['map_source']
 
         points_copy[map_mask] = origin_inner_points
         if has_dirs:
@@ -222,7 +240,7 @@ class SealBrushMapper(SealMapper):
     """
 
     def __init__(self, config_path: str, seal_config: object) -> None:
-        super().__init__()
+        super().__init__(seal_config)
 
         # (B, ?, 3)
         points = seal_config['raw']
@@ -364,13 +382,15 @@ class SealAnchorMapper(SealMapper):
     raw: [N,3] points, determine the plane
     translation: [3]
     radius: float affected area radius
+    scale: [3,]
     """
 
     def __init__(self, config_path: str, seal_config: object) -> None:
-        super().__init__()
+        super().__init__(seal_config)
         v_translation = np.array(seal_config['translation'])
         len_translation = np.linalg.norm(v_translation, 2)
         v_anchor = np.mean(seal_config['raw'], 0)
+        radius = seal_config['radius']
 
         plane = Plane.best_fit(seal_config['raw'])
 
@@ -382,7 +402,7 @@ class SealAnchorMapper(SealMapper):
         len_h = np.linalg.norm(v_h, 2)
 
         anchor_sphere_points = uv_sphere(
-            seal_config['radius'] * 1.1).vertices + v_anchor
+            radius * 1.1).vertices + v_anchor
         self.to_mesh = get_trimesh_box(
             np.vstack([anchor_sphere_points, v_anchor + 1.1 * v_translation]))
         self.to_mesh.export(os.path.join(config_path, 'to.obj'))
@@ -400,7 +420,10 @@ class SealAnchorMapper(SealMapper):
             'v_offset': v_offset,
             'v_h': v_h,
             'len_h': len_h,
-            'radius': seal_config['radius']
+            'radius': radius,
+            'scale': seal_config['scale'],
+            # workaround to disable filter of local points in pretraining
+            'map_source': True
         }
         if 'hsv' in seal_config:
             self.map_data['hsv'] = seal_config['hsv']
@@ -445,6 +468,9 @@ class SealAnchorMapper(SealMapper):
             None].T @ self.map_data['v_h'][None] / self.map_data['len_h']
 
         mapped_points = projected_offset_points[valid_mask] - v_map
+
+        # scale along axis
+        mapped_points = (mapped_points - self.map_data['v_anchor']) * self.map_data['scale'] + self.map_data['v_anchor']
 
         points_copy = points.clone()
         points_copy[valid_mask] = mapped_points
@@ -658,3 +684,26 @@ def modify_rgb(rgb: torch.Tensor, modification: torch.Tensor):
     hsl[:, 1, :] = hsl_modification[1]
     ret = hsl2rgb_torch(hsl).view(N, 3)
     return ret
+
+
+def convert_tensor(v, device=None, dtype=None):
+    args_dict = {}
+    if device is not None:
+        args_dict['device'] = device
+    if dtype is not None:
+        args_dict['dtype'] = dtype
+    if v is None:
+        return v
+    elif isinstance(v, torch.Tensor):
+        return v.to(**args_dict)
+    elif isinstance(v, np.ndarray):
+        return torch.from_numpy(v).to(**args_dict)
+    elif isinstance(v, list):
+        return torch.from_numpy(np.asarray(v)).to(**args_dict)
+    elif isinstance(v, (float, int)):
+        return torch.tensor(v, **args_dict)
+    else:
+        try:
+            return v.to(**args_dict)
+        except:
+            return v
