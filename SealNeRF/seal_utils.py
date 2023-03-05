@@ -382,6 +382,7 @@ class SealAnchorMapper(SealMapper):
     raw: [N,3] points, determine the plane
     translation: [3]
     radius: float affected area radius
+    scale: [3,]
     """
 
     def __init__(self, config_path: str, seal_config: object) -> None:
@@ -389,6 +390,7 @@ class SealAnchorMapper(SealMapper):
         v_translation = np.array(seal_config['translation'])
         len_translation = np.linalg.norm(v_translation, 2)
         v_anchor = np.mean(seal_config['raw'], 0)
+        radius = seal_config['radius']
 
         plane = Plane.best_fit(seal_config['raw'])
 
@@ -400,7 +402,7 @@ class SealAnchorMapper(SealMapper):
         len_h = np.linalg.norm(v_h, 2)
 
         anchor_sphere_points = uv_sphere(
-            seal_config['radius'] * 1.1).vertices + v_anchor
+            radius * 1.1).vertices + v_anchor
         self.to_mesh = get_trimesh_box(
             np.vstack([anchor_sphere_points, v_anchor + 1.1 * v_translation]))
         self.to_mesh.export(os.path.join(config_path, 'to.obj'))
@@ -418,7 +420,10 @@ class SealAnchorMapper(SealMapper):
             'v_offset': v_offset,
             'v_h': v_h,
             'len_h': len_h,
-            'radius': seal_config['radius']
+            'radius': radius,
+            'scale': seal_config['scale'],
+            # workaround to disable filter of local points in pretraining
+            'map_source': True
         }
         if 'hsv' in seal_config:
             self.map_data['hsv'] = seal_config['hsv']
@@ -463,6 +468,9 @@ class SealAnchorMapper(SealMapper):
             None].T @ self.map_data['v_h'][None] / self.map_data['len_h']
 
         mapped_points = projected_offset_points[valid_mask] - v_map
+
+        # scale along axis
+        mapped_points = (mapped_points - self.map_data['v_anchor']) * self.map_data['scale'] + self.map_data['v_anchor']
 
         points_copy = points.clone()
         points_copy[valid_mask] = mapped_points
