@@ -19,7 +19,8 @@ class SealMapper:
     the virtual root class of all kinds of seal mappers
     """
 
-    def __init__(self) -> None:
+    def __init__(self, seal_config: dict) -> None:
+        self.config = seal_config
         self.device = 'cpu'
         self.dtype = torch.float32
         # variables in `map_data`:
@@ -27,7 +28,8 @@ class SealMapper:
         # map_bound: for map_mask
         # pose_center: for pose generation
         # pose_radius: for pose generation
-        # hsv?: for color modification
+        # hsv?: for color hsv modification
+        # rgb?: for color rgb modification
         self.map_data = {}
         self.map_meshes: Meshes = None
         self.map_triangles: torch.Tensor = None
@@ -119,7 +121,7 @@ class SealBBoxMapper(SealMapper):
     """
 
     def __init__(self, config_path: str, seal_config: object) -> None:
-        super().__init__()
+        super().__init__(seal_config)
 
         source_to_target_transform = np.array(seal_config['transform'])
         source_to_target_rotation = np.array(
@@ -222,7 +224,7 @@ class SealBrushMapper(SealMapper):
     """
 
     def __init__(self, config_path: str, seal_config: object) -> None:
-        super().__init__()
+        super().__init__(seal_config)
 
         # (B, ?, 3)
         points = seal_config['raw']
@@ -367,7 +369,7 @@ class SealAnchorMapper(SealMapper):
     """
 
     def __init__(self, config_path: str, seal_config: object) -> None:
-        super().__init__()
+        super().__init__(seal_config)
         v_translation = np.array(seal_config['translation'])
         len_translation = np.linalg.norm(v_translation, 2)
         v_anchor = np.mean(seal_config['raw'], 0)

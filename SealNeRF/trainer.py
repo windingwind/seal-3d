@@ -1,3 +1,4 @@
+import sys
 import os
 from typing import Union
 import tensorboardX
@@ -22,6 +23,7 @@ def get_trainer(backbone: BackBoneTypes, character: CharacterTypes):
         trainer_cls = backbone_refs[backbone]
     else:
         raise NotImplementedError(f'trainer character {character.name}')
+    trainer_cls._character = character
     return trainer_cls
 
 
@@ -29,7 +31,7 @@ def trainer_constructor(base, backbone: BackBoneTypes):
     """
     Construct trainer class with dynamically selected base class
     """
-    Trainer = type(f'Trainer_{backbone}', (base,), {
+    Trainer = type(f'Trainer_{backbone.name}', (base,), {
         '__init__': init,
         'init_pretraining': init_pretraining,
         'train': train,
@@ -47,6 +49,12 @@ def trainer_constructor(base, backbone: BackBoneTypes):
     })
     Trainer._self = Trainer
     return Trainer
+
+
+def get_character_constructor(character: CharacterTypes):
+    def func(self):
+        return character
+    return func
 
 
 backbone_refs = {
@@ -234,6 +242,15 @@ def train(self: trainer_types, train_loader, valid_loader, max_epochs):
 
     # get a ref to error_map
     self.error_map = train_loader._data.error_map
+
+    if self._character is CharacterTypes.Student:
+        if getattr(self.model, 'seal_mapper'):
+            with open(os.path.join(self.workspace, 'seal.json'), 'w') as f:
+                json5.dump(self.model.seal_mapper.config, f, quote_keys=True)
+        with open(os.path.join(self.workspace, 'options.json'), 'w') as f:
+            json5.dump(self.opt.__dict__, f, quote_keys=True)
+        with open(os.path.join(self.workspace, 'run.sh'), 'w') as f:
+            f.write(f'python {" ".join(sys.argv)}')
 
     # cache gt
     # ray mask
