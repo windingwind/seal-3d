@@ -7,6 +7,7 @@ import numpy as np
 import tqdm
 import time
 import json5
+import trimesh
 from nerf.utils import Trainer as NGPTrainer
 from tensoRF.utils import Trainer as TensoRFTrainer
 from scipy.spatial.transform import Rotation
@@ -111,6 +112,9 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
             # map sampled points
             mapped_points, mapped_dirs, mapped_mask = self.teacher_trainer.model.seal_mapper.map_to_origin(local_points, torch.zeros_like(
                 local_points, device=self.device, dtype=torch.float32) + torch.tensor([1, 0, 0], device=self.device, dtype=torch.float32))
+            # if we enable map source, all points inside fill bound should be kept
+            if 'map_source' in self.teacher_trainer.model.seal_mapper.map_data:
+                mapped_mask[:] = True
             # filter sampled points. only store masked ones
             local_points = local_points[mapped_mask]
             N_local_points = local_points.shape[0]
@@ -125,7 +129,8 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
                 mapped_points, mapped_dirs)
 
             # map gt color
-            gt_color = self.teacher_trainer.model.seal_mapper.map_color(gt_color)
+            gt_color = self.teacher_trainer.model.seal_mapper.map_color(
+                gt_color)
 
             # prepare pretraining steps to avoid cuda oom
             local_steps = list(
@@ -145,17 +150,22 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
         # prepare surrounding data and gt
         if surrounding_point_step > 0:
             # (B, 2, 3) or (2, 3)
-            surrounding_bounds: torch.Tensor = self.teacher_trainer.model.seal_mapper.map_data['force_fill_bound']
+            surrounding_bounds: torch.Tensor = self.teacher_trainer.model.seal_mapper.map_data[
+                'force_fill_bound']
             if surrounding_bounds.ndim == 2:
                 surrounding_bounds[0] -= surrounding_bounds_extend
-                surrounding_bounds[0] = torch.max(surrounding_bounds[0], self.model.aabb_train[:3])
+                surrounding_bounds[0] = torch.max(
+                    surrounding_bounds[0], self.model.aabb_train[:3])
                 surrounding_bounds[1] += surrounding_bounds_extend
-                surrounding_bounds[1] = torch.min(surrounding_bounds[1], self.model.aabb_train[3:])
+                surrounding_bounds[1] = torch.min(
+                    surrounding_bounds[1], self.model.aabb_train[3:])
             else:
                 surrounding_bounds[:, 0] -= surrounding_bounds_extend
-                surrounding_bounds[:, 0] = torch.max(surrounding_bounds[:, 0], self.model.aabb_train[:3])
+                surrounding_bounds[:, 0] = torch.max(
+                    surrounding_bounds[:, 0], self.model.aabb_train[:3])
                 surrounding_bounds[:, 1] += surrounding_bounds_extend
-                surrounding_bounds[:, 1] = torch.min(surrounding_bounds[:, 1], self.model.aabb_train[3:])
+                surrounding_bounds[:, 1] = torch.min(
+                    surrounding_bounds[:, 1], self.model.aabb_train[3:])
             surrounding_points, surrounding_dirs = sample_points(
                 surrounding_bounds, surrounding_point_step, surrounding_angle_step)
             surrounding_points = surrounding_points.to(
@@ -226,6 +236,13 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
                 'steps': global_steps
             }
 
+        visualize_dir = os.path.join(self.workspace, 'pretrain_vis')
+        if not os.path.exists(visualize_dir):
+            os.makedirs(visualize_dir)
+        for k, v in self.pretraining_data.items():
+            trimesh.PointCloud(v['points'].view(-1, 3).cpu().numpy(), v['color'].view(-1, 3).cpu().numpy()).export(
+                os.path.join(visualize_dir, f'{k}.ply'))
+
 
 def train(self: trainer_types, train_loader, valid_loader, max_epochs):
     if self.opt.extra_epochs is not None:
@@ -281,7 +298,8 @@ def train(self: trainer_types, train_loader, valid_loader, max_epochs):
         # is_pretraining = epoch - first_epoch < self.pretraining_epochs
         if self.is_pretraining and epoch - first_epoch >= self.pretraining_epochs:
             self.is_pretraining = False
-            self.log(f"[INFO] Pretraining time: {sum(time_inspector['pretraining']):.4f}s")
+            self.log(
+                f"[INFO] Pretraining time: {sum(time_inspector['pretraining']):.4f}s")
 
         if self.is_pretraining:
             t = time.time()
@@ -548,15 +566,15 @@ def sample_points(bounds: torch.Tensor, point_step=0.005, angle_step=45):
     for i in range(bounds.shape[0]):
         coords_min, coords_max = bounds[i]
         X, Y, Z = torch.meshgrid(torch.arange(coords_min[0], coords_max[0], step=point_step),
-                                torch.arange(
+                                 torch.arange(
             coords_min[1], coords_max[1], step=point_step),
             torch.arange(coords_min[2], coords_max[2], step=point_step))
         sampled_points.append(torch.stack(
             [X, Y, Z], dim=-1).reshape(-1, 3))
 
         r_x, r_y, r_z = torch.meshgrid(torch.arange(0, 360, step=angle_step),
-                                    torch.arange(0, 360, step=angle_step),
-                                    torch.arange(0, 360, step=angle_step))
+                                       torch.arange(0, 360, step=angle_step),
+                                       torch.arange(0, 360, step=angle_step))
         eulers = torch.stack([r_x, r_y, r_z], dim=-1).reshape(-1, 3)
         sampled_dirs.append(torch.from_numpy(Rotation.from_euler('xyz', eulers.numpy(
         ), degrees=True).apply(np.array([1-1e-5, 0, 0]))))
@@ -599,14 +617,14 @@ def train_gui(self, train_loader, step=16, is_pretraining=False):
             'loss': 0.0,
             'lr': self.optimizer.param_groups[0]['lr']
         }
-    
+
     self.freeze_mlp(False)
     self.set_lr(-1)
-    
+
     loader = iter(train_loader)
 
     for _ in range(step):
-        
+
         # mimic an infinite loop dataloader (in case the total dataset is smaller than step)
         try:
             data = next(loader)
@@ -618,18 +636,18 @@ def train_gui(self, train_loader, step=16, is_pretraining=False):
         if self.model.cuda_ray and self.global_step % self.opt.update_extra_interval == 0:
             with torch.cuda.amp.autocast(enabled=self.fp16):
                 self.model.update_extra_state()
-        
+
         self.global_step += 1
 
         self.optimizer.zero_grad()
 
         with torch.cuda.amp.autocast(enabled=self.fp16):
             preds, truths, loss = self.train_step(data)
-        
+
         self.scaler.scale(loss).backward()
         self.scaler.step(self.optimizer)
         self.scaler.update()
-        
+
         if self.scheduler_update_every_step:
             self.lr_scheduler.step()
 
@@ -650,5 +668,5 @@ def train_gui(self, train_loader, step=16, is_pretraining=False):
         'loss': average_loss,
         'lr': self.optimizer.param_groups[0]['lr'],
     }
-    
+
     return outputs
