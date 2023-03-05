@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import argparse
+import json5
 
 from SealNeRF.types import BackBoneTypes, CharacterTypes
 from SealNeRF.provider import SealDataset, SealRandomDataset
@@ -82,6 +83,7 @@ if __name__ == '__main__':
                         help="if positive, use a background model at sphere(bg_radius)")
 
     # seal options
+    parser.add_argument('--seal_config', type=str, default='')
     # pretraining strategy
     parser.add_argument('--pretraining_epochs', type=int, default=100,
                         help="num epochs for local pretraining")
@@ -133,8 +135,17 @@ if __name__ == '__main__':
     parser.add_argument('--teacher_workspace', type=str,
                         default='', help="teacher trainer workspace")
     parser.add_argument('--teacher_ckpt', type=str, default='latest')
-    parser.add_argument('--seal_config', type=str, default='')
 
+    # secondary teacher model, only implemented with `cuda_ray` backend
+    # this is used for merging two different teacher models into the student model
+    # teacher model handles the non-mapped points, while secondary teacher model handles the mapped points.
+    parser.add_argument('--secondary_teacher_workspace', type=str,
+                        default=None, help="teacher trainer workspace")
+    parser.add_argument('--secondary_teacher_ckpt', type=str, default='latest')
+    # dataset options for sec-teacher json.
+    parser.add_argument('--secondary_teacher_options', type=json5.loads, default='{}')
+
+    # eval options
     parser.add_argument('--eval_interval', type=int,
                         default=50, help="eval_interval")
     parser.add_argument('--eval_count', type=int,
@@ -201,6 +212,24 @@ if __name__ == '__main__':
         model.init_mapper(mapper=teacher_model.seal_mapper)
     print(model)
 
+    use_secondary_teacher = opt.secondary_teacher_workspace is not None
+    if use_secondary_teacher:
+        sec_opt = argparse.Namespace(**opt.secondary_teacher_options)
+
+        sec_teacher_model = TeacherNetwork(
+            encoding="hashgrid",
+            bound=sec_opt.bound,
+            cuda_ray=opt.cuda_ray,
+            density_scale=1,
+            min_near=sec_opt.min_near,
+            density_thresh=sec_opt.density_thresh,
+            bg_radius=sec_opt.bg_radius,
+        )
+        # if not opt.gui:
+        #     sec_teacher_model.init_mapper(mapper=teacher_model.seal_mapper)
+        sec_teacher_model.train(False)
+        print(sec_teacher_model)
+
     criterion = torch.nn.MSELoss(reduction='none')
     #criterion = partial(huber_loss, reduction='none')
     # criterion = torch.nn.HuberLoss(reduction='none', beta=0.1) # only available after torch 1.10 ?
@@ -211,7 +240,7 @@ if __name__ == '__main__':
 
         metrics = [PSNRMeter(), LPIPSMeter(device=device)]
         trainer = TeacherTrainer('ngp', opt, model, device=device, workspace=opt.workspace,
-                                  criterion=criterion, fp16=opt.fp16, metrics=metrics, use_checkpoint=opt.ckpt)
+                                 criterion=criterion, fp16=opt.fp16, metrics=metrics, use_checkpoint=opt.ckpt)
 
         if opt.gui:
             from nerf.gui import NeRFGUI
@@ -241,22 +270,29 @@ if __name__ == '__main__':
 
         metrics = [PSNRMeter(), LPIPSMeter(device=device)]
         teacher_trainer = TeacherTrainer('ngp', opt, teacher_model, device=device, workspace=opt.teacher_workspace, optimizer=optimizer, criterion=criterion,
-                                          ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.teacher_ckpt, eval_interval=50)
+                                         ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.teacher_ckpt, eval_interval=50)
+        if use_secondary_teacher:
+            sec_teacher_trainer = TeacherTrainer('ngp', sec_opt, sec_teacher_model, device=device, workspace=opt.secondary_teacher_workspace, optimizer=optimizer, criterion=criterion,
+                                                 ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.secondary_teacher_ckpt, eval_interval=50)
+            # bind it to model and the infer will be automatically proxied.
+            # see SealNeRF/renderer.py
+            teacher_trainer.model.secondary_trainer = sec_teacher_trainer
+
         trainer = StudentTrainer('ngp', opt, model, teacher_trainer, proxy_eval=True,
-                              device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, ema_decay=0.95,
-                              fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.ckpt, eval_interval=opt.eval_interval, eval_count=opt.eval_count, max_keep_ckpt=65535)
+                                 device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, ema_decay=0.95,
+                                 fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.ckpt, eval_interval=opt.eval_interval, eval_count=opt.eval_count, max_keep_ckpt=65535)
 
         if not opt.gui:
             trainer.init_pretraining(epochs=opt.pretraining_epochs,
-                                    local_point_step=opt.pretraining_local_point_step,
-                                    local_angle_step=opt.pretraining_local_angle_step,
-                                    surrounding_point_step=opt.pretraining_surrounding_point_step,
-                                    surrounding_angle_step=opt.pretraining_surrounding_angle_step,
-                                    surrounding_bounds_extend=opt.pretraining_surrounding_bounds_extend,
-                                    global_point_step=opt.pretraining_global_point_step,
-                                    global_angle_step=opt.pretraining_global_angle_step,
-                                    batch_size=opt.pretraining_batch_size,
-                                    lr=opt.pretraining_lr)
+                                     local_point_step=opt.pretraining_local_point_step,
+                                     local_angle_step=opt.pretraining_local_angle_step,
+                                     surrounding_point_step=opt.pretraining_surrounding_point_step,
+                                     surrounding_angle_step=opt.pretraining_surrounding_angle_step,
+                                     surrounding_bounds_extend=opt.pretraining_surrounding_bounds_extend,
+                                     global_point_step=opt.pretraining_global_point_step,
+                                     global_angle_step=opt.pretraining_global_angle_step,
+                                     batch_size=opt.pretraining_batch_size,
+                                     lr=opt.pretraining_lr)
 
         if opt.custom_pose:
             train_dataset = SealRandomDataset(

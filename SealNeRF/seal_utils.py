@@ -404,7 +404,7 @@ class SealAnchorMapper(SealMapper):
         anchor_sphere_points = uv_sphere(
             radius * 1.1).vertices + v_anchor
         self.to_mesh = get_trimesh_box(
-            np.vstack([anchor_sphere_points, v_anchor + 1.1 * v_translation]))
+            np.vstack([anchor_sphere_points, v_anchor + 1.1 * v_translation, anchor_sphere_points - 0.1 * v_translation]))
         self.to_mesh.export(os.path.join(config_path, 'to.obj'))
 
         self.map_meshes = trimesh_to_pytorch3d(self.to_mesh)

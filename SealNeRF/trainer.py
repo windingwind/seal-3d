@@ -125,8 +125,13 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
             # infer gt sigma & color from teacher model and store them
             mapped_points = mapped_points[mapped_mask]
             mapped_dirs = mapped_dirs[mapped_mask]
-            gt_sigma, gt_color = self.teacher_trainer.model(
-                mapped_points, mapped_dirs)
+
+            if hasattr(self.teacher_trainer.model, 'secondary_trainer'):
+                gt_sigma, gt_color = self.teacher_trainer.model.secondary_trainer.model(
+                    mapped_points, mapped_dirs)
+            else:
+                gt_sigma, gt_color = self.teacher_trainer.model(
+                    mapped_points, mapped_dirs)
 
             # map gt color
             gt_color = self.teacher_trainer.model.seal_mapper.map_color(
