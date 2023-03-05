@@ -16,7 +16,8 @@ from SealNeRF.provider import SealDataset, SealRandomDataset
 # from SealNeRF.gui import NeRFGUI
 from SealNeRF.trainer import get_trainer
 # from SealNeRF.trainer import SealTrainer, OriginalTrainer
-import json, json5
+import json5
+from functools import partial
 
 OriginalTrainer = get_trainer(BackBoneTypes.NGP, CharacterTypes.Teacher)
 SealTrainer = get_trainer(BackBoneTypes.NGP, CharacterTypes.Student)
@@ -48,6 +49,23 @@ class OrbitCamera:
         # translate
         res[:3, 3] -= self.center
         return res
+
+    @pose.setter
+    def pose(self, mat):
+        rot = np.eye(4, dtype=np.float32)
+        rot[:3,:3] = mat[:3,:3]
+        # res = np.eye(4, dtype=np.float32)
+        # res[2, 3] -= self.radius
+        # res = rot @ res
+        # self.rot = R.from_matrix(mat[:3,:3])
+        # self.center = res[:3, 3] - mat[:3,3]
+        res = mat
+        res[:3, 3] += self.center
+        res = rot.T @ res
+        self.radius = (np.eye(4, dtype=np.float32) - res)[2, 3]
+        self.rot = R.from_matrix(mat[:3,:3])
+        print(mat)
+        print(self.pose)
 
     # intrinsics
     @property
@@ -84,17 +102,20 @@ class NeRFGUI:
         self.W = opt.W
         self.H = opt.H
         self.cam = OrbitCamera(opt.W, opt.H, r=opt.radius, fovy=opt.fovy)
+        self.cam_fix = False
         self.debug = debug
         self.bg_color = torch.ones(3, dtype=torch.float32)  # default white bg
         self.config = None
+        
         self.brush_config = {
             "type": "brush",
             "normal": [0, 1, 0],
             "brushType": [],
-            "brushDepth": 1,
-            "brushPressure": 0.01,
+            "brushDepth": 1.0,
+            "brushPressure": 0.007,
             "attenuationDistance": 0.02,
-            "attenuationMode": "linear"
+            "attenuationMode": "dry",
+            "simplifyVoxel": 16
         }
         self.brush_thickness = 10
         self.brush_type = "line"
@@ -177,7 +198,8 @@ class NeRFGUI:
             else:
                 return mix_brush(outputs['image'], self.brush_mask + [self.active_mask], self.brush_color)
         else:
-            depth_img = np.expand_dims(outputs['depth'], -1).repeat(3, -1).clamp_max(1)
+            # print(outputs['depth'].max())
+            depth_img = np.expand_dims(outputs['depth'] / (outputs['depth'].max() + 1e-6), -1).repeat(3, -1)
             if self.state != STATE_BRUSH:
                 return depth_img
             else:
@@ -193,7 +215,7 @@ class NeRFGUI:
     #     self.trainer.log(f"[INFO] {ncomponents} brush components found")
     #     return [position[labeled == i+1] for i in range(ncomponents)]
     def get_mask_pos(self, cluster=True):
-        position = self.teacher_trainer.test_gui(
+        position = self.trainer.test_gui(
                 self.cam.pose, self.cam.intrinsics, self.W, self.H, self.bg_color, 1, 1, True)['pos']
         return [position[mask[:,:,0] > 0] for mask in self.brush_mask]
     
@@ -295,13 +317,13 @@ class NeRFGUI:
                 # dpg.add_file_dialog(
                 #     show=False, callback=callback_file, tag="_file_selector", width=600 ,height=400)
 
-                with dpg.collapsing_header(label="Train", default_open=True):
+                with dpg.collapsing_header(label="Train", default_open=False):
                     with dpg.group(horizontal=True, tag="_train"):
                         dpg.add_text("Train: ")
                         def callback_train(sender, app_data):
                             if self.state == STATE_TRAIN:
                                 self.state = STATE_PREVIEW
-                                self.config = None
+                                # self.config = None
                                 dpg.configure_item(
                                     "_button_train", label="start")
                                 return
@@ -314,6 +336,11 @@ class NeRFGUI:
                                         dpg.set_value("_log_train", "No edit configure!")
                                         return
                                     brush_pos = self.get_mask_pos() # (N, 3)
+                                    norm = np.linalg.norm(self.brush_config['normal'], axis=0)
+                                    self.brush_config['normal'] = [x / norm for x in self.brush_config['normal']]
+                                    dpg.configure_item("_slider_nx", default_value=self.brush_config['normal'][0])
+                                    dpg.configure_item("_slider_ny", default_value=self.brush_config['normal'][1])
+                                    dpg.configure_item("_slider_nz", default_value=self.brush_config['normal'][2])
                                     self.config = dict(raw=brush_pos, rgb=self.brush_color, **self.brush_config)
                                 self.trainer.model.init_mapper(self.opt.workspace, self.config)
                                 self.teacher_trainer.model.init_mapper(self.opt.workspace, self.config)
@@ -331,18 +358,79 @@ class NeRFGUI:
                                 self.train_recorder.record()
                                 self.state = STATE_TRAIN
                                 if self.opt.pretraining_epochs > 0:
+                                    self.trainer.log(f"[INFO] Pretraining epochs: {self.trainer.pretraining_epochs}")
                                     self.is_pretraining = True
                                 dpg.configure_item(
                                     "_button_train", label="stop")
+                                dpg.configure_item("_control_window", collapsed=True)
+                                dpg.focus_item("_primary_window")
                         dpg.add_button(
                             label="start", tag="_button_train", callback=callback_train)
                         dpg.add_text(tag="_log_train")
                         dpg.bind_item_theme("_button_train", theme_button)
 
+                    # with dpg.collapsing_header(label="Pretrain options", default_open=False):
+                    def callback_set_pretraining_epochs(sender, app_data):
+                        self.opt.pretraining_epochs = app_data
+                    dpg.add_slider_int(label="epochs", min_value=0, max_value=200, default_value=self.opt.pretraining_epochs, callback=callback_set_pretraining_epochs)
+                    
+                    # save ckpt
+                    with dpg.group(horizontal=True):
+                        dpg.add_text("Checkpoint: ")
+
+                        def callback_save(sender, app_data):
+                            self.trainer.save_checkpoint(full=True, best=False)
+                            dpg.set_value(
+                                "_log_ckpt", "saved " + os.path.basename(self.trainer.stats["checkpoints"][-1]))
+                            # use epoch to indicate different calls.
+                            self.trainer.epoch += 1
+                        
+                        def callback_override(sender, app_data):
+                            self.teacher_trainer.model.load_state_dict(self.trainer.model.state_dict())
+                            # if self.trainer.ema is not None and self.teacher_trainer.ema is not None:
+                            #     self.teacher_trainer.ema.load_state_dict(self.trainer.ema.state_dict())
+                            #     print("[INFO] EMA loaded")
+                            self.need_update = True
+
+                        def callback_ckpt_reset(sender, app_data):
+                            self.trainer.model.load_state_dict(self.teacher_trainer.model.state_dict())
+                            # if self.trainer.ema is not None and self.teacher_trainer.ema is not None:
+                            #     self.trainer.ema.load_state_dict(self.teacher_trainer.ema.state_dict())
+                            #     print("[INFO] EMA loaded")
+                            self.need_update = True
+
+                        dpg.add_button(
+                            label="save", tag="_button_save", callback=callback_save)
+                        dpg.bind_item_theme("_button_save", theme_button)
+                        dpg.add_button(
+                            label="override", tag="_button_override", callback=callback_override)
+                        dpg.bind_item_theme("_button_override", theme_button)
+                        dpg.add_button(
+                            label="reset", tag="_button_ckpt_reset", callback=callback_ckpt_reset)
+                        dpg.bind_item_theme("_button_ckpt_reset", theme_button)
+
+                        dpg.add_text("", tag="_log_ckpt")
+                            
+
+                with dpg.collapsing_header(label="Edit", default_open=True):
                     with dpg.group(horizontal=True, tag="_config"):
                         dpg.add_text("Config: ")
                         dpg.add_button(label="open", tag="_button_config", callback=lambda:dpg.show_item("_file_selector"))
+
+                        def callback_reset(sender, app_data):
+                            self.state = STATE_PREVIEW
+                            self.config = None
+                            dpg.configure_item(
+                                "_button_brush", label="paint")
+                            self.brush_mask = []
+                            self.brush_config['brushType'] = []
+                            self.active_mask = np.zeros((self.H, self.W, 1), dtype=np.uint8)
+                            self.need_update = True
+                        
+                        dpg.add_button(label="reset", tag="_button_reset", callback=callback_reset)
+
                         dpg.bind_item_theme("_button_config", theme_button)
+                        dpg.bind_item_theme("_button_reset", theme_button)
 
                     # train / stop
                     with dpg.group(horizontal=True, tag="_brush"):
@@ -367,6 +455,8 @@ class NeRFGUI:
                                 self.brush_config['brushType'] = []
                                 dpg.configure_item(
                                     "_button_brush", label="reset")
+                                dpg.configure_item("_control_window", collapsed=True)
+                                dpg.focus_item("_primary_window")
                             else:
                                 self.state = STATE_PREVIEW
                                 dpg.configure_item(
@@ -412,6 +502,12 @@ class NeRFGUI:
                             if isinstance(brush_pos, list):
                                 brush_pos = [x.tolist() for x in brush_pos]
                             # print(brush_pos)
+
+                            norm = np.linalg.norm(self.brush_config['normal'], axis=0)
+                            self.brush_config['normal'] = [x / norm for x in self.brush_config['normal']]
+                            dpg.configure_item("_slider_nx", default_value=self.brush_config['normal'][0])
+                            dpg.configure_item("_slider_ny", default_value=self.brush_config['normal'][1])
+                            dpg.configure_item("_slider_nz", default_value=self.brush_config['normal'][2])
                             brush_config = dict(raw=brush_pos, rgb=self.brush_color.tolist(), **self.brush_config)
                             with open(os.path.join(self.opt.seal_config, 'seal.json'), 'w') as f:
                                 json5.dump(brush_config, f, indent=2, quote_keys=True)
@@ -425,53 +521,56 @@ class NeRFGUI:
                         dpg.bind_item_theme("_button_brush", theme_button)
                         # dpg.bind_item_theme("_button_brush_reset", theme_button)
                         dpg.bind_item_theme("_button_brush_json", theme_button)
-
-                    # save ckpt
-                    with dpg.group(horizontal=True):
-                        dpg.add_text("Checkpoint: ")
-
-                        def callback_save(sender, app_data):
-                            self.trainer.save_checkpoint(full=True, best=False)
-                            dpg.set_value(
-                                "_log_ckpt", "saved " + os.path.basename(self.trainer.stats["checkpoints"][-1]))
-                            # use epoch to indicate different calls.
-                            self.trainer.epoch += 1
-                        
-                        def callback_override(sender, app_data):
-                            self.teacher_trainer.model.load_state_dict(self.trainer.model.state_dict())
-                            if self.trainer.ema is not None and self.teacher_trainer.ema is not None:
-                                self.teacher_trainer.ema.load_state_dict(self.trainer.ema.state_dict())
-                                print("[INFO] EMA loaded")
-
-                        dpg.add_button(
-                            label="save", tag="_button_save", callback=callback_save)
-                        dpg.bind_item_theme("_button_save", theme_button)
-                        dpg.add_button(
-                            label="override", tag="_button_override", callback=callback_override)
-                        dpg.bind_item_theme("_button_override", theme_button)
-
-                        dpg.add_text("", tag="_log_ckpt")
                     
                     # mode combo
                     def callback_change_type(sender, app_data):
                         self.brush_type = app_data
                         self.need_update = True
 
-                    dpg.add_combo(('line', 'curve'), label='type', tag='_combo_type',
+                    dpg.add_combo(('line', 'curve'), label='brush type', tag='_combo_type',
                                 default_value=self.brush_type, callback=callback_change_type)
                     
                     def callback_change_brush(sender, app_data):
                         self.brush_color = np.array(app_data[:3], dtype=np.float32) # only need RGB in [0, 1]
                         # self.need_update = True
 
-                    dpg.add_color_edit((255, 0, 0), label="Brush Color", width=200, tag="_color_brush", no_alpha=True, callback=
+                    dpg.add_color_edit((255, 0, 0), label="brush Color", width=200, tag="_color_brush", no_alpha=True, callback=
                     callback_change_brush)
 
                     def callback_set_thickness(sender, app_data):
                         self.brush_thickness = app_data
 
-                    dpg.add_slider_int(label="Brush Thickness", min_value=1, max_value=50, format="%d pix", default_value=self.brush_thickness, callback=callback_set_thickness)
+                    dpg.add_slider_int(label="brush thickness", min_value=1, max_value=50, default_value=self.brush_thickness, callback=callback_set_thickness)
 
+                    # dpg.add_3d_slider(label="brush normal")
+                    def callback_set_normal_x(sender, app_data):
+                        self.brush_config['normal'][0] = app_data
+                    def callback_set_normal_y(sender, app_data):
+                        self.brush_config['normal'][1] = app_data
+                    def callback_set_normal_z(sender, app_data):
+                        self.brush_config['normal'][2] = app_data
+
+                    dpg.add_slider_float(label="brush normal x", tag="_slider_nx", min_value=-1.0, max_value=1.0, default_value=0.0, callback=callback_set_normal_x)
+                    dpg.add_slider_float(label="brush normal y", tag="_slider_ny", min_value=-1.0, max_value=1.0, default_value=1.0, callback=callback_set_normal_y)
+                    dpg.add_slider_float(label="brush normal z", tag="_slider_nz", min_value=-1.0, max_value=1.0, default_value=0.0, callback=callback_set_normal_z)
+                    # dpg.add_slider_float(label='brush pressure', min_value=0.0, max_value=)
+                    def callback_set_pressure(sender, app_data):
+                        self.brush_config['brushPressure'] = app_data
+                    def callback_set_brush_depth(sender, app_data):
+                        self.brush_config['brushDepth'] = app_data
+                    def callback_set_att_dist(sender, app_data):
+                        self.brush_config['attenuationDistance'] = app_data
+                    def callback_set_simp_vox(sender, app_data):
+                        self.brush_config['simplifyVoxel'] = app_data
+
+                    dpg.add_input_float(label='brush pressure', min_clamped=True, min_value=0.0, max_value=1.0, default_value=self.brush_config['brushPressure'], callback=callback_set_pressure)
+                    dpg.add_input_float(label='brush depth', min_clamped=True, min_value=0.0, max_value=2.0, default_value=self.brush_config['brushDepth'], callback=callback_set_brush_depth)
+                    dpg.add_input_float(label='attenuation distance', min_clamped=True, min_value=0.0, max_value=0.1, default_value=self.brush_config['attenuationDistance'], callback=callback_set_att_dist)
+                    dpg.add_slider_int(label="simpify voxel", min_value=5, max_value=20, default_value=self.brush_config['simplifyVoxel'], callback=callback_set_simp_vox)
+
+                    def callback_set_att_mode(sender, app_data):
+                        self.brush_config['attenuationMode'] = app_data
+                    dpg.add_combo(("dry", "linear"), label="attenuation mode", default_value="dry", callback=callback_set_att_mode)
 
 
                     # save mesh
@@ -494,6 +593,24 @@ class NeRFGUI:
 
                     # with dpg.group(horizontal=True):
                     #     dpg.add_text("", tag="_log_train_log")
+
+            with dpg.collapsing_header(label="Camera", default_open=True):
+
+                def callback_fix(sender, app_data):
+                    self.cam_fix = not self.cam_fix
+                dpg.add_checkbox(label="fix camera", default_value=self.cam_fix,
+                                     callback=callback_fix)
+                
+                if self.train_loader is not None:
+                    cameras = [f"train_{i}" for i in range(len(self.train_loader._data.poses))]
+                    def callback_change_camera(sender, app_data):
+                        i = int(app_data[6:])
+                        # print(self.train_loader._data.poses[i])
+                        self.cam.pose = self.train_loader._data.poses[i].cpu().numpy()
+                        # print(self.cam.pose)
+                        self.need_update = True
+                    dpg.add_combo(cameras, label='camera',
+                              default_value="", callback=callback_change_camera)
 
             # rendering options
             with dpg.collapsing_header(label="Options", default_open=False):
@@ -606,7 +723,8 @@ class NeRFGUI:
             dx = app_data[1]
             dy = app_data[2]
             if self.state != STATE_BRUSH:
-
+                if self.cam_fix:
+                    return
                 self.cam.orbit(dx, dy)
                 self.need_update = True
 
@@ -628,7 +746,7 @@ class NeRFGUI:
 
         def callback_camera_wheel_scale(sender, app_data):
 
-            if not dpg.is_item_focused("_primary_window") or self.state == STATE_BRUSH:
+            if self.cam_fix or not dpg.is_item_focused("_primary_window") or self.state == STATE_BRUSH:
                 return
 
             delta = app_data
@@ -641,7 +759,7 @@ class NeRFGUI:
 
         def callback_camera_drag_pan(sender, app_data):
 
-            if not dpg.is_item_focused("_primary_window") or self.state == STATE_BRUSH:
+            if self.cam_fix or not dpg.is_item_focused("_primary_window") or self.state == STATE_BRUSH:
                 return
 
             dx = app_data[1]
