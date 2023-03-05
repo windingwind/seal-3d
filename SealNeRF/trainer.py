@@ -475,7 +475,7 @@ def set_lr(self: trainer_types, lr: float):
         param_group['lr'] = lr
 
 
-def proxy_truth(self: trainer_types, data, all_ray: bool = True, use_cache: bool = False):
+def proxy_truth(self: trainer_types, data, all_ray: bool = True, use_cache: bool = False, n_batch: int = 1):
     """
     proxy the ground truth RGB from teacher model
     """
@@ -512,9 +512,23 @@ def proxy_truth(self: trainer_types, data, all_ray: bool = True, use_cache: bool
         rays_d = rays_d[compute_mask]
 
     if not is_skip_computing:
+        teacher_outputs = {
+            'image': [],
+            'depth': []
+        }
         with torch.no_grad():
-            teacher_outputs = self.teacher_trainer.model.render(
-                rays_o, rays_d, staged=True, bg_color=None, perturb=False, force_all_rays=all_ray, **vars(self.opt))
+            total_batches = rays_o.shape[1]
+            batch_size = total_batches // n_batch
+            if (total_batches % n_batch):
+                n_batch += 1
+            for i in range(n_batch):
+                current_teacher_outputs = self.teacher_trainer.model.render(
+                    rays_o[:, i*batch_size:(i+1)*batch_size, :], rays_d[:, i*batch_size:(i+1)*batch_size, :], staged=True, bg_color=None, perturb=False, force_all_rays=all_ray, **vars(self.opt))
+                teacher_outputs['image'].append(current_teacher_outputs['image'])
+                teacher_outputs['depth'].append(current_teacher_outputs['depth'])
+            teacher_outputs['image'] = torch.concat(teacher_outputs['image'], 1)
+            teacher_outputs['depth'] = torch.concat(teacher_outputs['depth'], 1)
+
 
     if use_cache:
         if not is_skip_computing:
@@ -545,13 +559,13 @@ def train_step(self: trainer_types, data):
 
 def eval_step(self: trainer_types, data):
     if self.proxy_eval:
-        self.proxy_truth(data)
+        self.proxy_truth(data, n_batch=5)
     return super(self._self, self).eval_step(data)
 
 
 def test_step(self: trainer_types, data, bg_color=None, perturb=False):
     if self.proxy_test:
-        self.proxy_truth(data)
+        self.proxy_truth(data, n_batch=5)
     return super(self._self, self).test_step(data, bg_color, perturb)
 
 
