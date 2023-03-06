@@ -78,6 +78,7 @@ def init(self: trainer_types, name, opt, student_model, teacher_model, proxy_tra
     self.proxy_eval = proxy_eval
     self.proxy_test = proxy_test
     self.is_pretraining = False
+    self.has_proxied = False
 
     self.cache_gt = cache_gt
 
@@ -653,6 +654,14 @@ def train_gui(self, train_loader, step=16, is_pretraining=False):
 
     self.freeze_mlp(False)
     self.set_lr(-1)
+
+    # if the model's bitfield is not hacked, do it before inferring
+    if not self.teacher_model.density_bitfield_hacked:
+        self.teacher_model.hack_bitfield()
+    if not self.has_proxied:
+        train_loader.extra_info['provider'].proxy_dataset(
+            self.teacher_model, n_batch=1)
+        self.has_proxied = True
 
     loader = iter(train_loader)
 
