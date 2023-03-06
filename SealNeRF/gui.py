@@ -54,24 +54,22 @@ class OrbitCamera:
     def pose(self, mat):
         rot = np.eye(4, dtype=np.float32)
         rot[:3,:3] = mat[:3,:3]
-        # res = np.eye(4, dtype=np.float32)
-        # res[2, 3] -= self.radius
-        # res = rot @ res
-        # self.rot = R.from_matrix(mat[:3,:3])
-        # self.center = res[:3, 3] - mat[:3,3]
-        res = mat
-        res[:3, 3] += self.center
-        res = rot.T @ res
-        self.radius = (np.eye(4, dtype=np.float32) - res)[2, 3]
+        res = np.eye(4, dtype=np.float32)
+        res[2, 3] -= self.radius
+        res = rot @ res
         self.rot = R.from_matrix(mat[:3,:3])
-        print(mat)
-        print(self.pose)
+        self.center = res[:3, 3] - mat[:3,3]
 
     # intrinsics
     @property
     def intrinsics(self):
         focal = self.H / (2 * np.tan(np.radians(self.fovy) / 2))
         return np.array([focal, focal, self.W // 2, self.H // 2])
+    
+    @intrinsics.setter
+    def intrinsics(self, intr):
+        focal = intr[0]
+        self.fovy = 2 * np.degrees(np.arctan(self.H / (2 * focal)))
 
     def orbit(self, dx, dy):
         # rotate along camera up/side axis!
@@ -109,10 +107,10 @@ class NeRFGUI:
         
         self.brush_config = {
             "type": "brush",
-            "normal": [0, 1, 0],
+            "normal": [1, 0, 0],
             "brushType": [],
-            "brushDepth": 1.0,
-            "brushPressure": 0.007,
+            "brushDepth": 0.5,
+            "brushPressure": 0.01,
             "attenuationDistance": 0.02,
             "attenuationMode": "dry",
             "simplifyVoxel": 16
@@ -332,16 +330,9 @@ class NeRFGUI:
                             else:
                                 dpg.set_value("_log_train", "")
                                 if self.state == STATE_BRUSH:
-                                    if len(self.brush_mask) == 0:
-                                        dpg.set_value("_log_train", "No edit configure!")
-                                        return
-                                    brush_pos = self.get_mask_pos() # (N, 3)
-                                    norm = np.linalg.norm(self.brush_config['normal'], axis=0)
-                                    self.brush_config['normal'] = [x / norm for x in self.brush_config['normal']]
-                                    dpg.configure_item("_slider_nx", default_value=self.brush_config['normal'][0])
-                                    dpg.configure_item("_slider_ny", default_value=self.brush_config['normal'][1])
-                                    dpg.configure_item("_slider_nz", default_value=self.brush_config['normal'][2])
-                                    self.config = dict(raw=brush_pos, rgb=self.brush_color, **self.brush_config)
+                                    callback_config_brush(None, None)
+                                    dpg.configure_item(
+                                        "_button_brush", label="paint")
                                 self.trainer.model.init_mapper(self.opt.workspace, self.config)
                                 self.teacher_trainer.model.init_mapper(self.opt.workspace, self.config)
                                 self.trainer.init_pretraining(epochs=self.opt.pretraining_epochs,
@@ -410,12 +401,20 @@ class NeRFGUI:
                         dpg.bind_item_theme("_button_ckpt_reset", theme_button)
 
                         dpg.add_text("", tag="_log_ckpt")
-                            
+
 
                 with dpg.collapsing_header(label="Edit", default_open=True):
                     with dpg.group(horizontal=True, tag="_config"):
                         dpg.add_text("Config: ")
                         dpg.add_button(label="open", tag="_button_config", callback=lambda:dpg.show_item("_file_selector"))
+
+                        def callback_save_json(sender, app_data):
+                            if self.config is None:
+                                dpg.set_value("_log_config", "No edit configure!")
+                            else:
+                                with open(os.path.join(self.opt.workspace, 'interactive.json'), 'w') as f:
+                                    json5.dump(self.config, f, indent=2, quote_keys=True)
+                        dpg.add_button(label="save", tag="_button_json", callback=callback_save_json)
 
                         def callback_reset(sender, app_data):
                             self.state = STATE_PREVIEW
@@ -428,8 +427,10 @@ class NeRFGUI:
                             self.need_update = True
                         
                         dpg.add_button(label="reset", tag="_button_reset", callback=callback_reset)
+                        dpg.add_text(tag="_log_config")
 
                         dpg.bind_item_theme("_button_config", theme_button)
+                        dpg.bind_item_theme("_button_json", theme_button)
                         dpg.bind_item_theme("_button_reset", theme_button)
 
                     # train / stop
@@ -493,8 +494,11 @@ class NeRFGUI:
                             #         "_button_brush", label="edit")
                             self.need_update = True
 
-                        def callback_save_json(sender, app_data):
+                        def callback_config_brush(sender, app_data):
                             if not self.state == STATE_BRUSH:
+                                return
+                            if len(self.brush_mask) == 0:
+                                dpg.set_value("_log_train", "No edit configure!")
                                 return
                             brush_pos = self.get_mask_pos() # (N, 3)
                             if len(brush_pos) == 0:
@@ -502,25 +506,37 @@ class NeRFGUI:
                             if isinstance(brush_pos, list):
                                 brush_pos = [x.tolist() for x in brush_pos]
                             # print(brush_pos)
-
                             norm = np.linalg.norm(self.brush_config['normal'], axis=0)
                             self.brush_config['normal'] = [x / norm for x in self.brush_config['normal']]
                             dpg.configure_item("_slider_nx", default_value=self.brush_config['normal'][0])
                             dpg.configure_item("_slider_ny", default_value=self.brush_config['normal'][1])
                             dpg.configure_item("_slider_nz", default_value=self.brush_config['normal'][2])
-                            brush_config = dict(raw=brush_pos, rgb=self.brush_color.tolist(), **self.brush_config)
-                            with open(os.path.join(self.opt.seal_config, 'seal.json'), 'w') as f:
-                                json5.dump(brush_config, f, indent=2, quote_keys=True)
+                            self.config = dict(raw=brush_pos, rgb=self.brush_color.tolist(), **self.brush_config)
+                            # with open(os.path.join(self.opt.workspace, 'interactive.json'), 'w') as f:
+                            #     json5.dump(brush_config, f, indent=2, quote_keys=True)
+                        
+                        def callback_save_mask(sender, app_data):
+                            mask = np.zeros((self.H, self.W, 1), dtype=np.bool_)
+                            for m in self.brush_mask:
+                                mask |= (m > 0)
+                            mask = (mask.astype(np.uint8) * 255)
+                            painted = (self.render_buffer.clip(0, 1) * 255).astype(np.uint8)
+                            cv2.imwrite(f"{self.opt.workspace}/mask.png", mask)
+                            cv2.imwrite(f"{self.opt.workspace}/painted.png", painted[:,:,::-1])
+                            np.savez(f"{self.opt.workspace}/camera.npz", pose=self.cam.pose, intrinsics=self.cam.intrinsics)
 
                         dpg.add_button(
                             label="paint", tag="_button_brush", callback=callback_brush)
                         # dpg.add_button(
                         #     label="reset", tag="_button_brush_reset", callback=callback_reset)
                         dpg.add_button(
-                            label="json", tag="_button_brush_json", callback=callback_save_json)
+                            label="config", tag="_button_brush_config", callback=callback_config_brush)
+                        dpg.add_button(
+                            label="mask", tag="_button_brush_mask", callback=callback_save_mask)
                         dpg.bind_item_theme("_button_brush", theme_button)
                         # dpg.bind_item_theme("_button_brush_reset", theme_button)
-                        dpg.bind_item_theme("_button_brush_json", theme_button)
+                        dpg.bind_item_theme("_button_brush_config", theme_button)
+                        dpg.bind_item_theme("_button_brush_mask", theme_button)
                     
                     # mode combo
                     def callback_change_type(sender, app_data):
@@ -550,9 +566,9 @@ class NeRFGUI:
                     def callback_set_normal_z(sender, app_data):
                         self.brush_config['normal'][2] = app_data
 
-                    dpg.add_slider_float(label="brush normal x", tag="_slider_nx", min_value=-1.0, max_value=1.0, default_value=0.0, callback=callback_set_normal_x)
-                    dpg.add_slider_float(label="brush normal y", tag="_slider_ny", min_value=-1.0, max_value=1.0, default_value=1.0, callback=callback_set_normal_y)
-                    dpg.add_slider_float(label="brush normal z", tag="_slider_nz", min_value=-1.0, max_value=1.0, default_value=0.0, callback=callback_set_normal_z)
+                    dpg.add_slider_float(label="brush normal x", tag="_slider_nx", min_value=-1.0, max_value=1.0, default_value=self.brush_config['normal'][0], callback=callback_set_normal_x)
+                    dpg.add_slider_float(label="brush normal y", tag="_slider_ny", min_value=-1.0, max_value=1.0, default_value=self.brush_config['normal'][1], callback=callback_set_normal_y)
+                    dpg.add_slider_float(label="brush normal z", tag="_slider_nz", min_value=-1.0, max_value=1.0, default_value=self.brush_config['normal'][2], callback=callback_set_normal_z)
                     # dpg.add_slider_float(label='brush pressure', min_value=0.0, max_value=)
                     def callback_set_pressure(sender, app_data):
                         self.brush_config['brushPressure'] = app_data
@@ -570,7 +586,7 @@ class NeRFGUI:
 
                     def callback_set_att_mode(sender, app_data):
                         self.brush_config['attenuationMode'] = app_data
-                    dpg.add_combo(("dry", "linear"), label="attenuation mode", default_value="dry", callback=callback_set_att_mode)
+                    dpg.add_combo(("dry", "linear"), label="attenuation mode", default_value=self.brush_config['attenuationMode'], callback=callback_set_att_mode)
 
 
                     # save mesh
@@ -601,12 +617,18 @@ class NeRFGUI:
                 dpg.add_checkbox(label="fix camera", default_value=self.cam_fix,
                                      callback=callback_fix)
                 
+                def callback_change_radius(sender, app_data):
+                    self.cam.radius = app_data
+                    self.need_update = True
+                dpg.add_slider_float(label="radius", tag="_slider_radius", min_value=0.1, max_value=3.0, default_value=self.cam.radius, callback=callback_change_radius)
+                
                 if self.train_loader is not None:
                     cameras = [f"train_{i}" for i in range(len(self.train_loader._data.poses))]
                     def callback_change_camera(sender, app_data):
                         i = int(app_data[6:])
                         # print(self.train_loader._data.poses[i])
                         self.cam.pose = self.train_loader._data.poses[i].cpu().numpy()
+                        self.cam.intrinsics = self.train_loader._data.intrinsics
                         # print(self.cam.pose)
                         self.need_update = True
                     dpg.add_combo(cameras, label='camera',
@@ -752,6 +774,7 @@ class NeRFGUI:
             delta = app_data
 
             self.cam.scale(delta)
+            dpg.configure_item("_slider_radius", default_value=self.cam.radius)
             self.need_update = True
 
             if self.debug:
