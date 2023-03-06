@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from tqdm import tqdm
 
 from nerf.utils import get_rays
 from nerf.provider import NeRFDataset, rand_poses
@@ -7,6 +8,56 @@ from .seal_utils import SealMapper
 
 
 class SealDataset(NeRFDataset):
+    def __init__(self, opt, device, type='train', downscale=1, n_test=10):
+        super().__init__(opt, device, type, downscale, n_test)
+        self.proxy_flag = False
+        self.depths = None
+
+    def proxy_dataset(self, model, n_batch: int = 1):
+        depths = []
+        images = []
+        for i in tqdm(range(len(self.poses)), desc=f'Proxying {self.type} data'):
+            index = [i]
+            poses = self.poses[index].to(self.device)  # [B, 4, 4]
+
+            # copied from SealNeRF/trainer.py. always be true
+            image_shape = self.images[index].shape
+
+            error_map = None if self.error_map is None else self.error_map[index]
+
+            rays = get_rays(poses, self.intrinsics, self.H, self.W,
+                            -1, error_map, self.opt.patch_size)
+
+            rays_o = rays['rays_o']  # [B, N, 3]
+            rays_d = rays['rays_d']  # [B, N, 3]
+            proxied_images = []
+            proxied_depths = []
+
+            with torch.no_grad():
+                total_batches = rays_o.shape[1]
+                batch_size = total_batches // n_batch
+                if (total_batches % n_batch):
+                    n_batch += 1
+                for i in range(n_batch):
+                    current_teacher_outputs = model.render(
+                        rays_o[:, i*batch_size:(i+1)*batch_size, :], rays_d[:, i*batch_size:(i+1)*batch_size, :], staged=True, bg_color=None, perturb=False, force_all_rays=True, **vars(self.opt))
+                    proxied_images.append(current_teacher_outputs['image'])
+                    proxied_depths.append(current_teacher_outputs['depth'])
+                proxied_images = torch.nan_to_num(
+                    torch.concat(proxied_images, 1), nan=0.)
+                proxied_depths = torch.nan_to_num(
+                    torch.concat(proxied_depths, 1), nan=0.)
+
+            proxied_images = proxied_images.view(*image_shape[:-1], -1)
+            proxied_depths = proxied_depths.view(*image_shape[:-1], -1)
+
+            images.append(proxied_images[0].detach().cpu())
+            depths.append(proxied_depths[0].detach().cpu())
+
+        self.images = torch.stack(images, dim=0)
+        self.depths = torch.stack(depths, dim=0)
+        self.proxy_flag = True
+
     def collate(self, index):
 
         B = len(index)  # a list of length 1
@@ -41,6 +92,7 @@ class SealDataset(NeRFDataset):
             'W': self.W,
             'rays_o': rays['rays_o'],
             'rays_d': rays['rays_d'],
+            'skip_proxy': self.proxy_flag,
             'data_index': index,
             'pixel_index': rays['inds'].to('cpu') if 'inds' in rays else None
         }
@@ -53,6 +105,14 @@ class SealDataset(NeRFDataset):
                     B, -1, C), 1, torch.stack(C * [rays['inds']], -1))  # [B, N, 3/4]
             results['images'] = images
 
+        if self.depths is not None:
+            depths = self.depths[index].to(self.device)  # [B, H, W, 3/4]
+            if self.training:
+                C = depths.shape[-1]
+                depths = torch.gather(depths.view(
+                    B, -1, C), 1, torch.stack(C * [rays['inds']], -1))  # [B, N, 3/4]
+            results['depths'] = depths
+
         # need inds to update error_map
         if error_map is not None:
             results['index'] = index
@@ -64,7 +124,8 @@ class SealDataset(NeRFDataset):
         loader = super().dataloader()
         loader.extra_info = {
             'H': self.H,
-            'W': self.W
+            'W': self.W,
+            'provider': self,
         }
         return loader
 

@@ -483,8 +483,8 @@ class Trainer(object):
         # MSE loss
         loss = self.criterion(pred_rgb, gt_rgb).mean(-1) # [B, N, 3] --> [B, N]
 
-        if 'depth' in data:
-            gt_depth = data['depth']
+        if 'depths' in data:
+            gt_depth = data['depths']
             pred_depth = torch.nan_to_num(outputs['depth'], nan=0.)
             loss += self.criterion_depth(pred_depth, gt_depth)
 

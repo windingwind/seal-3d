@@ -257,6 +257,14 @@ def train(self: trainer_types, train_loader, valid_loader, max_epochs):
         self.writer = tensorboardX.SummaryWriter(
             os.path.join(self.workspace, "run", self.name))
 
+    # if the model's bitfield is not hacked, do it before inferring
+    if not self.teacher_model.density_bitfield_hacked:
+        self.teacher_model.hack_bitfield()
+    train_loader.extra_info['provider'].proxy_dataset(
+        self.teacher_model, n_batch=5)
+    valid_loader.extra_info['provider'].proxy_dataset(
+        self.teacher_model, n_batch=5)
+
     # mark untrained region (i.e., not covered by any camera from the training dataset)
     if self.model.cuda_ray:
         self.model.mark_untrained_grid(
@@ -484,9 +492,12 @@ def proxy_truth(self: trainer_types, data, all_ray: bool = True, use_cache: bool
     """
     proxy the ground truth RGB from teacher model
     """
+    # already proxied the dataset
+    if 'skip_proxy' in data and data['skip_proxy']:
+        return
     # avoid OOM
     torch.cuda.empty_cache()
-    # if the model's bitfield is not hacked, do it before infering
+    # if the model's bitfield is not hacked, do it before inferring
     if not self.teacher_model.density_bitfield_hacked:
         self.teacher_model.hack_bitfield()
 
@@ -529,11 +540,14 @@ def proxy_truth(self: trainer_types, data, all_ray: bool = True, use_cache: bool
             for i in range(n_batch):
                 current_teacher_outputs = self.teacher_model.render(
                     rays_o[:, i*batch_size:(i+1)*batch_size, :], rays_d[:, i*batch_size:(i+1)*batch_size, :], staged=True, bg_color=None, perturb=False, force_all_rays=all_ray, **vars(self.opt))
-                teacher_outputs['image'].append(current_teacher_outputs['image'])
-                teacher_outputs['depth'].append(current_teacher_outputs['depth'])
-            teacher_outputs['image'] = torch.concat(teacher_outputs['image'], 1)
-            teacher_outputs['depth'] = torch.concat(teacher_outputs['depth'], 1)
-
+                teacher_outputs['image'].append(
+                    current_teacher_outputs['image'])
+                teacher_outputs['depth'].append(
+                    current_teacher_outputs['depth'])
+            teacher_outputs['image'] = torch.concat(
+                teacher_outputs['image'], 1)
+            teacher_outputs['depth'] = torch.concat(
+                teacher_outputs['depth'], 1)
 
     if use_cache:
         if not is_skip_computing:
@@ -543,15 +557,15 @@ def proxy_truth(self: trainer_types, data, all_ray: bool = True, use_cache: bool
                                    [compute_mask]] = torch.nan_to_num(teacher_outputs['depth'], nan=0.).detach().cpu()
         data['images'] = self.proxy_cache_image[data['data_index'],
                                                 data['pixel_index']].to(self.device)
-        data['depth'] = self.proxy_cache_depth[data['data_index'],
-                                               data['pixel_index']].to(self.device)
+        data['depths'] = self.proxy_cache_depth[data['data_index'],
+                                                data['pixel_index']].to(self.device)
     else:
         data['images'] = torch.nan_to_num(teacher_outputs['image'], nan=0.)
-        data['depth'] = torch.nan_to_num(teacher_outputs['depth'], nan=0.)
+        data['depths'] = torch.nan_to_num(teacher_outputs['depth'], nan=0.)
     # reshape if it is a full image
     if is_full:
         data['images'] = data['images'].view(*image_shape[:-1], -1)
-        data['depth'] = data['depth'].view(*image_shape[:-1], -1)
+        data['depths'] = data['depths'].view(*image_shape[:-1], -1)
 
 
 def train_step(self: trainer_types, data):
