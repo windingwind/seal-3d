@@ -139,6 +139,10 @@ if __name__ == '__main__':
     parser.add_argument('--eval_count', type=int,
                         default=10, help="eval_count")
 
+    # test option
+    parser.add_argument('--test_type', type=str,
+                        default='test', help="test_type")
+
     opt = parser.parse_args()
 
     if opt.O:
@@ -197,7 +201,7 @@ if __name__ == '__main__':
     if opt.test:
 
         trainer = TeacherTrainer('ngp', opt, model, device=device, workspace=opt.workspace,
-                                  criterion=criterion, fp16=opt.fp16, metrics=[PSNRMeter()], use_checkpoint=opt.ckpt)
+                                 criterion=criterion, fp16=opt.fp16, metrics=[PSNRMeter()], use_checkpoint=opt.ckpt)
 
         if opt.gui:
             from nerf.gui import NeRFGUI
@@ -226,23 +230,22 @@ if __name__ == '__main__':
             optimizer, lambda iter: 0.1 ** min(iter / opt.iters, 1))
 
         teacher_trainer = TeacherTrainer('tensoRF', opt, teacher_model, device=device, workspace=opt.teacher_workspace, optimizer=optimizer, criterion=criterion,
-                                          ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=[PSNRMeter()], use_checkpoint=opt.teacher_ckpt, eval_interval=50)
+                                         ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=[PSNRMeter()], use_checkpoint=opt.teacher_ckpt, eval_interval=50)
 
         trainer = StudentTrainer('tensoRF', opt, model, teacher_trainer.model, proxy_eval=True,
-                              device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, ema_decay=None, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=[PSNRMeter()], use_checkpoint=opt.ckpt, eval_interval=opt.eval_interval, eval_count=opt.eval_count, max_keep_ckpt=65535)
+                                 device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, ema_decay=None, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=[PSNRMeter()], use_checkpoint=opt.ckpt, eval_interval=opt.eval_interval, eval_count=opt.eval_count, max_keep_ckpt=65535)
 
         if not opt.gui:
             trainer.init_pretraining(epochs=opt.pretraining_epochs,
-                                    local_point_step=opt.pretraining_local_point_step,
-                                    local_angle_step=opt.pretraining_local_angle_step,
-                                    surrounding_point_step=opt.pretraining_surrounding_point_step,
-                                    surrounding_angle_step=opt.pretraining_surrounding_angle_step,
-                                    surrounding_bounds_extend=opt.pretraining_surrounding_bounds_extend,
-                                    global_point_step=opt.pretraining_global_point_step,
-                                    global_angle_step=opt.pretraining_global_angle_step,
-                                    batch_size=opt.pretraining_batch_size,
-                                    lr=opt.pretraining_lr)
-
+                                     local_point_step=opt.pretraining_local_point_step,
+                                     local_angle_step=opt.pretraining_local_angle_step,
+                                     surrounding_point_step=opt.pretraining_surrounding_point_step,
+                                     surrounding_angle_step=opt.pretraining_surrounding_angle_step,
+                                     surrounding_bounds_extend=opt.pretraining_surrounding_bounds_extend,
+                                     global_point_step=opt.pretraining_global_point_step,
+                                     global_angle_step=opt.pretraining_global_angle_step,
+                                     batch_size=opt.pretraining_batch_size,
+                                     lr=opt.pretraining_lr)
 
         if opt.custom_pose:
             train_dataset = SealRandomDataset(
@@ -280,7 +283,7 @@ if __name__ == '__main__':
 
             # also test
             test_loader = SealDataset(
-                opt, device=device, type='test').dataloader()
+                opt, device=device, type=opt.test_type).dataloader()
 
             if test_loader.has_gt:
                 # blender has gt, so evaluate it.

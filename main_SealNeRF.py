@@ -143,13 +143,18 @@ if __name__ == '__main__':
                         default=None, help="teacher trainer workspace")
     parser.add_argument('--secondary_teacher_ckpt', type=str, default='latest')
     # dataset options for sec-teacher json.
-    parser.add_argument('--secondary_teacher_options', type=json5.loads, default='{}')
+    parser.add_argument('--secondary_teacher_options',
+                        type=json5.loads, default='{}')
 
     # eval options
     parser.add_argument('--eval_interval', type=int,
                         default=50, help="eval_interval")
     parser.add_argument('--eval_count', type=int,
                         default=10, help="eval_count")
+
+    # test option
+    parser.add_argument('--test_type', type=str,
+                        default='test', help="test_type")
 
     opt = parser.parse_args()
 
@@ -325,7 +330,7 @@ if __name__ == '__main__':
 
             # also test
             test_loader = SealDataset(
-                opt, device=device, type='test').dataloader()
+                opt, device=device, type=opt.test_type).dataloader()
 
             # teacher_trainer.test(test_loader, write_video=False)
 
