@@ -228,7 +228,7 @@ if __name__ == '__main__':
         teacher_trainer = TeacherTrainer('tensoRF', opt, teacher_model, device=device, workspace=opt.teacher_workspace, optimizer=optimizer, criterion=criterion,
                                           ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=[PSNRMeter()], use_checkpoint=opt.teacher_ckpt, eval_interval=50)
 
-        trainer = StudentTrainer('tensoRF', opt, model, teacher_trainer, proxy_eval=True,
+        trainer = StudentTrainer('tensoRF', opt, model, teacher_trainer.model, proxy_eval=True,
                               device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, ema_decay=None, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=[PSNRMeter()], use_checkpoint=opt.ckpt, eval_interval=opt.eval_interval, eval_count=opt.eval_count, max_keep_ckpt=65535)
 
         if not opt.gui:

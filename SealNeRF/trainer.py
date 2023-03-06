@@ -66,12 +66,12 @@ backbone_refs = {
 trainer_types = Union[NGPTrainer, TensoRFTrainer]
 
 
-def init(self: trainer_types, name, opt, student_model, teacher_trainer, proxy_train=True, proxy_test=False, proxy_eval=False, cache_gt=False, criterion=None, optimizer=None, ema_decay=None, lr_scheduler=None, metrics=..., local_rank=0, world_size=1, device=None, mute=False, fp16=False, eval_interval=1, eval_count=None, max_keep_ckpt=2, workspace='workspace', best_mode='min', use_loss_as_metric=True, report_metric_at_train=False, use_checkpoint="latest", use_tensorboardX=True, scheduler_update_every_step=False):
+def init(self: trainer_types, name, opt, student_model, teacher_model, proxy_train=True, proxy_test=False, proxy_eval=False, cache_gt=False, criterion=None, optimizer=None, ema_decay=None, lr_scheduler=None, metrics=..., local_rank=0, world_size=1, device=None, mute=False, fp16=False, eval_interval=1, eval_count=None, max_keep_ckpt=2, workspace='workspace', best_mode='min', use_loss_as_metric=True, report_metric_at_train=False, use_checkpoint="latest", use_tensorboardX=True, scheduler_update_every_step=False):
     super(self._self, self).__init__(name, opt, student_model, criterion=criterion, optimizer=optimizer, ema_decay=ema_decay, lr_scheduler=lr_scheduler, metrics=metrics, local_rank=local_rank, world_size=world_size, device=device, mute=mute, fp16=fp16, eval_interval=eval_interval, eval_count=eval_count,
                                      max_keep_ckpt=max_keep_ckpt, workspace=workspace, best_mode=best_mode, use_loss_as_metric=use_loss_as_metric, report_metric_at_train=report_metric_at_train, use_checkpoint=use_checkpoint, use_tensorboardX=use_tensorboardX, scheduler_update_every_step=scheduler_update_every_step)
     # use teacher trainer instead of teacher model directly
     # to make sure it's properly initialized, e.g. device
-    self.teacher_trainer = teacher_trainer
+    self.teacher_model = teacher_model
 
     # flags indicating the proxy behavior of different stages
     self.proxy_train = proxy_train
@@ -101,7 +101,7 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
 
         # prepare local data and gt
         if local_point_step > 0:
-            local_bounds = self.teacher_trainer.model.seal_mapper.map_data['force_fill_bound']
+            local_bounds = self.teacher_model.seal_mapper.map_data['force_fill_bound']
             local_points, local_dirs = sample_points(
                 local_bounds, local_point_step, local_angle_step)
             local_points = local_points.to(
@@ -110,10 +110,10 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
                 self.device, torch.float32)
 
             # map sampled points
-            mapped_points, mapped_dirs, mapped_mask = self.teacher_trainer.model.seal_mapper.map_to_origin(local_points, torch.zeros_like(
+            mapped_points, mapped_dirs, mapped_mask = self.teacher_model.seal_mapper.map_to_origin(local_points, torch.zeros_like(
                 local_points, device=self.device, dtype=torch.float32) + torch.tensor([1, 0, 0], device=self.device, dtype=torch.float32))
             # if we enable map source, all points inside fill bound should be kept
-            if 'map_source' in self.teacher_trainer.model.seal_mapper.map_data:
+            if 'map_source' in self.teacher_model.seal_mapper.map_data:
                 mapped_mask[:] = True
             # filter sampled points. only store masked ones
             local_points = local_points[mapped_mask]
@@ -126,15 +126,15 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
             mapped_points = mapped_points[mapped_mask]
             mapped_dirs = mapped_dirs[mapped_mask]
 
-            if hasattr(self.teacher_trainer.model, 'secondary_trainer'):
-                gt_sigma, gt_color = self.teacher_trainer.model.secondary_trainer.model(
+            if hasattr(self.teacher_model, 'secondary_teacher_model'):
+                gt_sigma, gt_color = self.teacher_model.secondary_teacher_model(
                     mapped_points, mapped_dirs)
             else:
-                gt_sigma, gt_color = self.teacher_trainer.model(
+                gt_sigma, gt_color = self.teacher_model(
                     mapped_points, mapped_dirs)
 
             # map gt color
-            gt_color = self.teacher_trainer.model.seal_mapper.map_color(
+            gt_color = self.teacher_model.seal_mapper.map_color(
                 gt_color)
 
             # prepare pretraining steps to avoid cuda oom
@@ -155,7 +155,7 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
         # prepare surrounding data and gt
         if surrounding_point_step > 0:
             # (B, 2, 3) or (2, 3)
-            surrounding_bounds: torch.Tensor = self.teacher_trainer.model.seal_mapper.map_data[
+            surrounding_bounds: torch.Tensor = self.teacher_model.seal_mapper.map_data[
                 'force_fill_bound']
             if surrounding_bounds.ndim == 2:
                 surrounding_bounds[0] -= surrounding_bounds_extend
@@ -179,7 +179,7 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
                 self.device, torch.float32)
 
             # map sampled points
-            _, _, mapped_mask = self.teacher_trainer.model.seal_mapper.map_to_origin(surrounding_points, torch.zeros_like(
+            _, _, mapped_mask = self.teacher_model.seal_mapper.map_to_origin(surrounding_points, torch.zeros_like(
                 surrounding_points, device=self.device, dtype=torch.float32) + torch.tensor([1, 0, 0], device=self.device, dtype=torch.float32))
             # filter sampled points. only store unmasked ones
             surrounding_points = surrounding_points[~mapped_mask]
@@ -188,7 +188,7 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
             surrounding_dirs = surrounding_dirs[torch.randint(
                 surrounding_dirs.shape[0], (N_surrounding_points,), device=self.device)]
 
-            gt_sigma, gt_color = self.teacher_trainer.model(
+            gt_sigma, gt_color = self.teacher_model(
                 surrounding_points, surrounding_dirs)
 
             # prepare pretraining steps to avoid cuda oom
@@ -215,7 +215,7 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
             global_dirs = global_dirs.to(
                 self.device, torch.float32)
 
-            _, _, mapped_mask = self.teacher_trainer.model.seal_mapper.map_to_origin(global_points, torch.zeros_like(
+            _, _, mapped_mask = self.teacher_model.seal_mapper.map_to_origin(global_points, torch.zeros_like(
                 global_points, device=self.device, dtype=torch.float32) + torch.tensor([1, 0, 0], device=self.device, dtype=torch.float32))
 
             # keep non-edited points
@@ -224,7 +224,7 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
             global_dirs = global_dirs[torch.randint(
                 global_dirs.shape[0], (N_global_points,), device=self.device)]
 
-            gt_sigma, gt_color = self.teacher_trainer.model(
+            gt_sigma, gt_color = self.teacher_model(
                 global_points, global_dirs)
 
             # prepare pretraining steps to avoid cuda oom
@@ -487,8 +487,8 @@ def proxy_truth(self: trainer_types, data, all_ray: bool = True, use_cache: bool
     # avoid OOM
     torch.cuda.empty_cache()
     # if the model's bitfield is not hacked, do it before infering
-    if not self.teacher_trainer.model.density_bitfield_hacked:
-        self.teacher_trainer.model.hack_bitfield()
+    if not self.teacher_model.density_bitfield_hacked:
+        self.teacher_model.hack_bitfield()
 
     # if we want a full image (B, H, W, C) or just rays (B, N, C)
     is_full = False
@@ -527,7 +527,7 @@ def proxy_truth(self: trainer_types, data, all_ray: bool = True, use_cache: bool
             if (total_batches % n_batch):
                 n_batch += 1
             for i in range(n_batch):
-                current_teacher_outputs = self.teacher_trainer.model.render(
+                current_teacher_outputs = self.teacher_model.render(
                     rays_o[:, i*batch_size:(i+1)*batch_size, :], rays_d[:, i*batch_size:(i+1)*batch_size, :], staged=True, bg_color=None, perturb=False, force_all_rays=all_ray, **vars(self.opt))
                 teacher_outputs['image'].append(current_teacher_outputs['image'])
                 teacher_outputs['depth'].append(current_teacher_outputs['depth'])
@@ -555,8 +555,8 @@ def proxy_truth(self: trainer_types, data, all_ray: bool = True, use_cache: bool
 
 
 def train_step(self: trainer_types, data):
-    # if self.teacher_trainer.model.density_bitfield_hacked:
-    #     self.teacher_trainer.model.restore_bitfield()
+    # if self.teacher_model.density_bitfield_hacked:
+    #     self.teacher_model.restore_bitfield()
     if self.proxy_train:
         self.proxy_truth(data, use_cache=self.cache_gt)
     return super(self._self, self).train_step(data)

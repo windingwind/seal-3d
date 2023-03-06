@@ -299,9 +299,9 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
             sigmas, rgbs = self(mapped_xyzs.view(xyzs.shape),
                                 mapped_dirs.view(dirs.shape))
 
-            # for across-model editing. non-mapped points are inferred from self, while mapped points are inferred from self.secondary_trainer
-            if hasattr(self, 'secondary_trainer'):
-                secondary_sigmas, secondary_rgbs = self.secondary_trainer.model(mapped_xyzs.view(xyzs.shape)[mapped_mask], mapped_dirs.view(dirs.shape)[mapped_mask])
+            # for across-model editing. non-mapped points are inferred from self, while mapped points are inferred from self.secondary_teacher_model
+            if hasattr(self, 'secondary_teacher_model'):
+                secondary_sigmas, secondary_rgbs = self.secondary_teacher_model(mapped_xyzs.view(xyzs.shape)[mapped_mask], mapped_dirs.view(dirs.shape)[mapped_mask])
                 sigmas[mapped_mask] = secondary_sigmas
                 rgbs[mapped_mask] = secondary_rgbs
             # density_outputs = self.density(xyzs) # [M,], use a dict since it may include extra things, like geo_feat for rgb.
@@ -383,8 +383,8 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
 
                 sigmas, rgbs = self(mapped_xyzs.view(
                     xyzs.shape), mapped_dirs.view(dirs.shape))
-                if hasattr(self, 'secondary_trainer'):
-                    secondary_sigmas, secondary_rgbs = self.secondary_trainer.model(mapped_xyzs.view(xyzs.shape)[mapped_mask], mapped_dirs.view(dirs.shape)[mapped_mask])
+                if hasattr(self, 'secondary_teacher_model'):
+                    secondary_sigmas, secondary_rgbs = self.secondary_teacher_model(mapped_xyzs.view(xyzs.shape)[mapped_mask], mapped_dirs.view(dirs.shape)[mapped_mask])
                     sigmas[mapped_mask] = secondary_sigmas
                     rgbs[mapped_mask] = secondary_rgbs
                 # density_outputs = self.density(xyzs) # [M,], use a dict since it may include extra things, like geo_feat for rgb.

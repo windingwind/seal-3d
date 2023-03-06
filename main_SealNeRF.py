@@ -276,9 +276,9 @@ if __name__ == '__main__':
                                                  ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.secondary_teacher_ckpt, eval_interval=50)
             # bind it to model and the infer will be automatically proxied.
             # see SealNeRF/renderer.py
-            teacher_trainer.model.secondary_trainer = sec_teacher_trainer
+            teacher_trainer.model.secondary_teacher_model = sec_teacher_trainer.model
 
-        trainer = StudentTrainer('ngp', opt, model, teacher_trainer, proxy_eval=True,
+        trainer = StudentTrainer('ngp', opt, model, teacher_trainer.model, proxy_eval=True,
                                  device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, ema_decay=0.95,
                                  fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.ckpt, eval_interval=opt.eval_interval, eval_count=opt.eval_count, max_keep_ckpt=65535)
 
