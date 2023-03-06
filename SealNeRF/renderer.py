@@ -27,6 +27,9 @@ class SealNeRFRenderer(NeRFRenderer):
         bounds: torch.Tensor = self.seal_mapper.map_data['force_fill_bound']
         if bounds.ndim == 2:
             bounds = bounds[None]
+
+        bounds[:, 0, :] = torch.max(bounds[:, 0, :], self.aabb_infer[:3].to(bounds.device))
+        bounds[:, 1, :] = torch.min(bounds[:, 1, :], self.aabb_infer[-3:].to(bounds.device))
         grid_indices = []
         bitfield_indices = []
         for i in range(bounds.shape[0]):
