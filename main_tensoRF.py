@@ -62,6 +62,11 @@ if __name__ == '__main__':
     parser.add_argument('--clip_text', type=str, default='', help="text input for CLIP guidance")
     parser.add_argument('--rand_pose', type=int, default=-1, help="<0 uses no rand pose, =0 only uses rand pose, >0 sample one rand pose every $ known poses")
 
+    # test option
+    # dtu don't have test split
+    parser.add_argument('--test_type', type=str,
+                        default='test', help="test_type")
+
     opt = parser.parse_args()
 
     if opt.O:
@@ -108,7 +113,7 @@ if __name__ == '__main__':
             gui.render()
         
         else:
-            test_loader = NeRFDataset(opt, device=device, type='test').dataloader()
+            test_loader = NeRFDataset(opt, device=device, type=opt.test_type).dataloader()
 
             if test_loader.has_gt:
                 trainer.evaluate(test_loader) # blender has gt, so evaluate it.
@@ -144,7 +149,7 @@ if __name__ == '__main__':
             trainer.train(train_loader, valid_loader, max_epoch)
 
             # also test
-            test_loader = NeRFDataset(opt, device=device, type='test').dataloader()
+            test_loader = NeRFDataset(opt, device=device, type=opt.test_type).dataloader()
             
             if test_loader.has_gt:
                 trainer.evaluate(test_loader) # blender has gt, so evaluate it.
