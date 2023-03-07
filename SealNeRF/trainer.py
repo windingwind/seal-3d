@@ -576,13 +576,13 @@ def train_step(self: trainer_types, data):
         self.proxy_truth(data, use_cache=self.cache_gt)
     return super(self._self, self).train_step(data)
 
-
+@torch.no_grad()
 def eval_step(self: trainer_types, data):
     if self.proxy_eval:
         self.proxy_truth(data, n_batch=5)
     return super(self._self, self).eval_step(data)
 
-
+@torch.no_grad()
 def test_step(self: trainer_types, data, bg_color=None, perturb=False):
     if self.proxy_test:
         self.proxy_truth(data, n_batch=5)
