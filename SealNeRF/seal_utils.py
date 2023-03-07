@@ -2,6 +2,7 @@ import os
 from typing import Union, Tuple
 import json5
 import numpy as np
+import cv2
 import torch
 from pytorch3d.structures import Meshes
 # must be imported after `import torch`
@@ -44,7 +45,7 @@ class SealMapper:
         """
         raise NotImplementedError()
 
-    def map_color(self, colors: torch.Tensor) -> torch.Tensor:
+    def map_color(self, points: torch.Tensor, dirs: torch.Tensor, colors: torch.Tensor) -> torch.Tensor:
         """
         map color
         """
@@ -54,6 +55,28 @@ class SealMapper:
         if 'rgb' in self.map_data:
             colors = modify_rgb(
                 colors, self.map_data['rgb'])
+        if 'image' in self.map_data:
+            image = self.map_data['image']
+            # assume C=3
+            H, W, C = image.shape
+            v_norm = self.map_data['v_image_norm']
+            v_o = self.map_data['v_image_o']
+            v_w = self.map_data['v_image_w']
+            v_h = self.map_data['v_image_h']
+            projected_points = project_points(v_norm, v_o, points)
+            v_op = projected_points - v_o
+            v_ow = v_w - v_o
+            v_oh = v_h - v_o
+            len_ow = torch.norm(v_ow, 2)
+            len_oh = torch.norm(v_oh, 2)
+            idx_w = torch.min(torch.max(torch.tensor(0., device=points.device), torch.floor(
+                v_op @ v_ow.T / len_ow**2 * W)), torch.tensor(W - 1, device=points.device)).to(torch.long)
+            idx_h = torch.min(torch.max(torch.tensor(0., device=points.device), torch.floor(
+                v_op @ v_oh.T / len_oh**2 * H)), torch.tensor(H - 1, device=points.device)).to(torch.long)
+            mask = self.map_data['image_mask'][idx_h, idx_w][None].T
+            modified_colors = modify_rgb(colors, image[idx_h, idx_w], 0.65)
+            colors = mask * modified_colors + (1-mask) * colors
+
         return colors
 
     def map_data_conversion(self, T: torch.Tensor = None, force: bool = False):
@@ -323,6 +346,27 @@ class SealBrushMapper(SealMapper):
             self.map_data['hsv'] = seal_config['hsv']
         if 'rgb' in seal_config:
             self.map_data['rgb'] = seal_config['rgb']
+        if 'imageConfig' in seal_config:
+            image_conf = seal_config['imageConfig']
+            raw_image = cv2.imread(
+                image_conf['path'], cv2.IMREAD_UNCHANGED)
+            if raw_image.shape[2] == 4:
+                alpha = raw_image[:, :, 3] / 255
+                image = cv2.cvtColor(raw_image, cv2.COLOR_BGRA2RGB).astype(np.float32) / 255
+            else:
+                alpha = np.ones(raw_image.shape[:2])
+                image = cv2.cvtColor(raw_image, cv2.COLOR_BGR2RGB).astype(np.float32) / 255
+            v_o = np.asarray(image_conf['o'])
+            v_w = np.asarray(image_conf['w'])
+            v_h = np.asarray(image_conf['h'])
+            image_plane = Plane.best_fit([v_o, v_w, v_h])
+            self.map_data['image'] = image
+            self.map_data['image_mask'] = alpha
+            self.map_data['v_image_norm'] = image_plane.normal
+            self.map_data['v_image_o'] = v_o
+            self.map_data['v_image_w'] = v_w
+            self.map_data['v_image_h'] = v_h
+
         self.map_data_conversion(force=True)
 
     def map_to_origin(self, points: Union[torch.Tensor, np.ndarray], dirs: Union[torch.Tensor, np.ndarray] = None):
@@ -338,13 +382,12 @@ class SealBrushMapper(SealMapper):
 
         N_points, N_dims = inner_points.shape
 
-        projected_points = project_points(
-            self.map_data['normal_expand'], self.map_data['center'], inner_points)
-        brush_border_distance = torch.cdist(
-            projected_points, self.map_data['border_points']).min(1)[0]
-
         mode = self.map_data['attenuation_mode']
         if mode == 'linear':
+            projected_points = project_points(
+                self.map_data['normal_expand'], self.map_data['center'], inner_points)
+            brush_border_distance = torch.cdist(
+                projected_points, self.map_data['border_points']).min(1)[0]
             points_mapped = inner_points - self.map_data['normal_expand']
             # N_points, 3
             distance_filter = self.map_data['attenuation_distance'] > brush_border_distance
@@ -470,7 +513,8 @@ class SealAnchorMapper(SealMapper):
         mapped_points = projected_offset_points[valid_mask] - v_map
 
         # scale along axis
-        mapped_points = (mapped_points - self.map_data['v_anchor']) * self.map_data['scale'] + self.map_data['v_anchor']
+        mapped_points = (
+            mapped_points - self.map_data['v_anchor']) * self.map_data['scale'] + self.map_data['v_anchor']
 
         points_copy = points.clone()
         points_copy[valid_mask] = mapped_points
@@ -669,7 +713,7 @@ def modify_hsv(rgb: torch.Tensor, modification: torch.Tensor):
     return hsv2rgb_torch(hsv).view(N, 3)
 
 
-def modify_rgb(rgb: torch.Tensor, modification: torch.Tensor):
+def modify_rgb(rgb: torch.Tensor, modification: torch.Tensor, keep_rate: float = 0):
     """
     the original color is not correct makes the converted hsl value meaningless
     """
@@ -679,9 +723,10 @@ def modify_rgb(rgb: torch.Tensor, modification: torch.Tensor):
     # return modification.repeat(N).view(N, 3).to(rgb.device, rgb.dtype)
     hsl = rgb2hsl_torch(rgb.view(N, 3, 1))
     hsl_modification = rgb2hsl_torch(modification.view(
-        1, 3, 1)).view(3).to(rgb.device, rgb.dtype)
-    hsl[:, 0, :] = hsl_modification[0]
-    hsl[:, 1, :] = hsl_modification[1]
+        -1, 3, 1)).to(rgb.device, rgb.dtype)
+    hsl[:, 0, :] = hsl_modification[:, 0, :]
+    hsl[:, 1, :] = hsl_modification[:, 1, :]
+    hsl[:, 2, :] = hsl_modification[:, 2, :] * keep_rate + hsl[:, 2, :] * (1-keep_rate)
     ret = hsl2rgb_torch(hsl).view(N, 3)
     return ret
 

@@ -135,7 +135,7 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
 
             # map gt color
             gt_color = self.teacher_model.seal_mapper.map_color(
-                gt_color)
+                mapped_points, mapped_dirs, gt_color)
 
             # prepare pretraining steps to avoid cuda oom
             local_steps = list(
