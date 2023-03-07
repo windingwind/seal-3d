@@ -485,7 +485,7 @@ class Trainer(object):
 
         if 'depths' in data:
             gt_depth = data['depths']
-            pred_depth = torch.nan_to_num(outputs['depth'], nan=0.)
+            pred_depth = torch.nan_to_num(outputs['depth'], nan=0.).view(gt_depth.shape)
             loss += self.criterion_depth(pred_depth, gt_depth)
 
         # patch-based rendering

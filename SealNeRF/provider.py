@@ -51,8 +51,8 @@ class SealDataset(NeRFDataset):
             proxied_images = proxied_images.view(*image_shape[:-1], -1)
             proxied_depths = proxied_depths.view(*image_shape[:-1], -1)
 
-            images.append(proxied_images[0].detach().cpu())
-            depths.append(proxied_depths[0].detach().cpu())
+            images.append(proxied_images[0].detach())
+            depths.append(proxied_depths[0].detach())
 
         self.images = torch.stack(images, dim=0)
         self.depths = torch.stack(depths, dim=0)

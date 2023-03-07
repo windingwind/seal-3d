@@ -27,6 +27,9 @@ class SealNeRFRenderer(NeRFRenderer):
         bounds: torch.Tensor = self.seal_mapper.map_data['force_fill_bound']
         if bounds.ndim == 2:
             bounds = bounds[None]
+
+        bounds[:, 0, :] = torch.max(bounds[:, 0, :], self.aabb_infer[:3].to(bounds.device))
+        bounds[:, 1, :] = torch.min(bounds[:, 1, :], self.aabb_infer[-3:].to(bounds.device))
         grid_indices = []
         bitfield_indices = []
         for i in range(bounds.shape[0]):
@@ -310,7 +313,7 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
             sigmas = self.density_scale * sigmas
 
             if self.seal_mapper is not None:
-                rgbs[mapped_mask] = self.seal_mapper.map_color(rgbs[mapped_mask])
+                rgbs[mapped_mask] = self.seal_mapper.map_color(mapped_xyzs[mapped_mask], mapped_dirs[mapped_mask], rgbs[mapped_mask])
 
             #print(f'valid RGB query ratio: {mask.sum().item() / mask.shape[0]} (total = {mask.sum().item()})')
 
@@ -393,7 +396,7 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
                 sigmas = self.density_scale * sigmas
 
                 if self.seal_mapper is not None:
-                    rgbs[mapped_mask] = self.seal_mapper.map_color(rgbs[mapped_mask])
+                    rgbs[mapped_mask] = self.seal_mapper.map_color(mapped_xyzs[mapped_mask], mapped_dirs[mapped_mask], rgbs[mapped_mask])
 
                 raymarching.composite_rays(
                     n_alive, n_step, rays_alive, rays_t, sigmas, rgbs, deltas, weights_sum, depth, image, T_thresh)

@@ -254,7 +254,7 @@ if __name__ == '__main__':
 
         else:
             test_loader = SealDataset(
-                opt, device=device, type='test').dataloader()
+                opt, device=device, type=opt.test_type).dataloader()
 
             if test_loader.has_gt:
                 # blender has gt, so evaluate it.
