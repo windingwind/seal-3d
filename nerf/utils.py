@@ -750,6 +750,7 @@ class Trainer(object):
 
     
     # [GUI] test on a single image
+    @torch.no_grad()
     def test_gui(self, pose, intrinsics, W, H, bg_color=None, spp=1, downscale=1, return_pos=False):
         
         # render resolution (may need downscale to for better frame rate)
@@ -774,11 +775,11 @@ class Trainer(object):
             self.ema.store()
             self.ema.copy_to()
 
-        with torch.no_grad():
-            with torch.cuda.amp.autocast(enabled=self.fp16):
-                # here spp is used as perturb random seed! (but not perturb the first sample)
-                preds, preds_depth = self.test_step(data, bg_color=bg_color, perturb=False if spp == 1 else spp)
-            preds_depth = torch.nan_to_num(preds_depth)
+        # with torch.no_grad():
+        with torch.cuda.amp.autocast(enabled=self.fp16):
+            # here spp is used as perturb random seed! (but not perturb the first sample)
+            preds, preds_depth = self.test_step(data, bg_color=bg_color, perturb=False if spp == 1 else spp)
+        preds_depth = torch.nan_to_num(preds_depth)
 
         if self.ema is not None:
             self.ema.restore()
