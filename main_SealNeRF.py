@@ -246,6 +246,12 @@ if __name__ == '__main__':
         metrics = [PSNRMeter(), LPIPSMeter(device=device)]
         trainer = TeacherTrainer('ngp', opt, model, device=device, workspace=opt.workspace,
                                  criterion=criterion, fp16=opt.fp16, metrics=metrics, use_checkpoint=opt.ckpt)
+        if use_secondary_teacher:
+            sec_teacher_trainer = TeacherTrainer('ngp', sec_opt, sec_teacher_model, device=device, workspace=opt.secondary_teacher_workspace, criterion=criterion,
+                                                 fp16=opt.fp16, metrics=metrics, use_checkpoint=opt.secondary_teacher_ckpt)
+            # bind it to model and the infer will be automatically proxied.
+            # see SealNeRF/renderer.py
+            trainer.model.secondary_teacher_model = sec_teacher_trainer.model
 
         if opt.gui:
             from nerf.gui import NeRFGUI
@@ -261,6 +267,7 @@ if __name__ == '__main__':
                 trainer.evaluate(test_loader)
 
             trainer.test(test_loader, write_video=True)  # test and save video
+            trainer.test(test_loader, write_video=False)  # test and save video
 
             trainer.save_mesh(resolution=256, threshold=10)
 
