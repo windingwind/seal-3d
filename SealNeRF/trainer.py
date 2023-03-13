@@ -261,7 +261,7 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
                     os.path.join(visualize_dir, f'{k}.ply'))
 
 
-def train(self: trainer_types, train_loader, valid_loader, max_epochs):
+def train(self: trainer_types, train_loader, valid_loader, max_epochs, proxy_batch: int = 1):
     if self.opt.extra_epochs is not None:
         max_epochs = self.epoch + self.opt.extra_epochs
 
@@ -273,9 +273,9 @@ def train(self: trainer_types, train_loader, valid_loader, max_epochs):
     if not self.teacher_model.density_bitfield_hacked:
         self.teacher_model.hack_bitfield()
     train_loader.extra_info['provider'].proxy_dataset(
-        self.teacher_model, n_batch=1)
+        self.teacher_model, n_batch=proxy_batch)
     valid_loader.extra_info['provider'].proxy_dataset(
-        self.teacher_model, n_batch=1)
+        self.teacher_model, n_batch=proxy_batch)
 
     # mark untrained region (i.e., not covered by any camera from the training dataset)
     if self.model.cuda_ray:

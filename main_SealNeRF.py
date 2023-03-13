@@ -155,6 +155,9 @@ if __name__ == '__main__':
     # test option
     parser.add_argument('--test_type', type=str,
                         default='test', help="test_type")
+    
+    parser.add_argument('--proxy_batch', type=int,
+                        default=1, help="bigger for slower proxy while less chance to oom")
 
     opt = parser.parse_args()
 
@@ -333,7 +336,7 @@ if __name__ == '__main__':
             trainer.log(
                 f'[INFO] Proxy train/eval/test: {trainer.proxy_train}/{trainer.proxy_eval}/{trainer.proxy_test}')
 
-            trainer.train(train_loader, valid_loader, max_epoch)
+            trainer.train(train_loader, valid_loader, max_epoch, proxy_batch=opt.proxy_batch)
 
             # also test
             test_loader = SealDataset(
