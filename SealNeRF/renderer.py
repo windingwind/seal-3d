@@ -75,8 +75,8 @@ class SealNeRFRenderer(NeRFRenderer):
 
 
 class SealNeRFTeacherRenderer(SealNeRFRenderer):
-    def __init__(self, bound=1, cuda_ray=False, density_scale=1, min_near=0.2, density_thresh=0.01, bg_radius=-1, **kwargs):
-        super().__init__(bound=bound, cuda_ray=cuda_ray,
+    def __init__(self, bound=1, cuda_ray=False, density_scale=1, min_near=0.2, density_thresh=0.01, bg_radius=-1, log2_hashmap_size=18, **kwargs):
+        super().__init__(bound=bound, cuda_ray=cuda_ray, log2_hashmap_size=log2_hashmap_size,
                          density_scale=density_scale, min_near=min_near, density_thresh=density_thresh, bg_radius=bg_radius)
 
     def run(self, rays_o, rays_d, num_steps=128, upsample_steps=128, bg_color=None, perturb=False, **kwargs):
@@ -419,6 +419,6 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
 
 
 class SealNeRFStudentRenderder(SealNeRFRenderer):
-    def __init__(self, bound=1, cuda_ray=False, density_scale=1, min_near=0.2, density_thresh=0.01, bg_radius=-1, **kwargs):
-        super().__init__(bound=bound, cuda_ray=cuda_ray,
+    def __init__(self, bound=1, cuda_ray=False, density_scale=1, min_near=0.2, density_thresh=0.01, bg_radius=-1, log2_hashmap_size=18, **kwargs):
+        super().__init__(bound=bound, cuda_ray=cuda_ray, log2_hashmap_size=log2_hashmap_size,
                          density_scale=density_scale, min_near=min_near, density_thresh=density_thresh, bg_radius=bg_radius)
