@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+import torch.multiprocessing as mp
 from nerf.utils import get_rays
 from nerf.provider import NeRFDataset, rand_poses
 from .seal_utils import SealMapper
@@ -41,7 +42,7 @@ class SealDataset(NeRFDataset):
                 with torch.cuda.amp.autocast(enabled=self.fp16):
                     for i in range(n_batch):
                         current_teacher_outputs = model.render(
-                            rays_o[:, i*batch_size:(i+1)*batch_size, :], rays_d[:, i*batch_size:(i+1)*batch_size, :], staged=True, bg_color=None, perturb=False, force_all_rays=True, **vars(self.opt))
+                            rays_o[:, i*batch_size:(i+1)*batch_size, :], rays_d[:, i*batch_size:(i+1)*batch_size, :], staged=True, bg_color=None, perturb=False, force_all_rays=True, dt_gamma=1/128, **vars(self.opt))
                         proxied_images.append(current_teacher_outputs['image'])
                         proxied_depths.append(current_teacher_outputs['depth'])
                 proxied_images = torch.nan_to_num(
@@ -55,10 +56,18 @@ class SealDataset(NeRFDataset):
             images.append(proxied_images[0].detach())
             depths.append(proxied_depths[0].detach())
 
+        torch.cuda.empty_cache()
         self.images = torch.stack(images, dim=0)
         self.depths = torch.stack(depths, dim=0)
         self.proxy_flag = True
 
+    def proxy_dataset_async(self, model, flag, n_batch: int = 1):
+        def task(dataset, model, n_batch):
+            self.proxy_dataset(dataset, model, n_batch)
+            flag.value = True
+        p = mp.Process(target=task, args=(self, model, n_batch))
+        p.start()
+    
     def collate(self, index):
 
         B = len(index)  # a list of length 1

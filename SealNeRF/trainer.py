@@ -3,6 +3,8 @@ import os
 from typing import Union
 import tensorboardX
 import torch
+import ctypes
+from multiprocessing import Value
 import numpy as np
 import tqdm
 import time
@@ -672,8 +674,14 @@ def train_gui(self, train_loader, step=16, is_pretraining=False):
     if not self.teacher_model.density_bitfield_hacked:
         self.teacher_model.hack_bitfield()
     if not self.has_proxied:
-        train_loader.extra_info['provider'].proxy_dataset(
-            self.teacher_model, n_batch=1)
+        if hasattr(self, 'is_proxy_running') and self.is_proxy_running.value:
+            return {
+                'loss': 0.0,
+                'lr': self.optimizer.param_groups[0]['lr']
+            }
+        self.is_proxy_running = Value(ctypes.c_bool, True)
+        train_loader.extra_info['provider'].proxy_dataset_async(
+            self.teacher_model, self.is_proxy_running, n_batch=1)
         self.has_proxied = True
 
     loader = iter(train_loader)
