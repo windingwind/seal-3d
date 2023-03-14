@@ -366,7 +366,8 @@ def pretrain_one_epoch(self: trainer_types, silent=False):
     """
     self.set_lr(self.pretraining_lr)
 
-    if not self.model.density_bitfield_hacked and hasattr(self, 'force_fill_bitfield_indices'):
+    # if not self.model.density_bitfield_hacked and hasattr(self, 'force_fill_bitfield_indices'):
+    if not self.model.density_bitfield_hacked:
         self.model.hack_bitfield()
 
     if not silent:
@@ -502,6 +503,7 @@ def set_lr(self: trainer_types, lr: float):
         param_group['lr'] = lr
 
 
+@torch.no_grad()
 def proxy_truth(self: trainer_types, data, all_ray: bool = True, use_cache: bool = False, n_batch: int = 1):
     """
     proxy the ground truth RGB from teacher model
@@ -673,16 +675,23 @@ def train_gui(self, train_loader, step=16, is_pretraining=False):
     # if the model's bitfield is not hacked, do it before inferring
     if not self.teacher_model.density_bitfield_hacked:
         self.teacher_model.hack_bitfield()
-    if not self.has_proxied:
-        if hasattr(self, 'is_proxy_running') and self.is_proxy_running.value:
-            return {
-                'loss': 0.0,
-                'lr': self.optimizer.param_groups[0]['lr']
-            }
-        self.is_proxy_running = Value(ctypes.c_bool, True)
-        train_loader.extra_info['provider'].proxy_dataset_async(
-            self.teacher_model, self.is_proxy_running, n_batch=1)
-        self.has_proxied = True
+    # if not self.has_proxied:
+    #     # if hasattr(self, 'is_proxy_running'):
+    #     #     if self.is_proxy_running.value:
+    #     #         return {
+    #     #             'loss': 0.0,
+    #     #             'lr': self.optimizer.param_groups[0]['lr']
+    #     #         }
+    #     #     else:
+    #     #         self.has_proxied = True
+    #     # self.is_proxy_running = Value(ctypes.c_bool, True)
+    #     train_loader.extra_info['provider'].proxy_dataset(
+    #         self.teacher_model, n_batch=1)
+    #     self.has_proxied = True
+    #     # return {
+    #     #     'loss': 0.0,
+    #     #     'lr': self.optimizer.param_groups[0]['lr']
+    #     # }
 
     loader = iter(train_loader)
 

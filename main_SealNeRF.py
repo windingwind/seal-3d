@@ -18,8 +18,10 @@ from loss import huber_loss
 if __name__ == '__main__':
     TeacherTrainer = get_trainer(BackBoneTypes.NGP, CharacterTypes.Teacher)
     StudentTrainer = get_trainer(BackBoneTypes.NGP, CharacterTypes.Student)
-    TeacherNetwork = get_network(BackBoneTypes.NGP, CharacterTypes.Teacher)
-    StudentNetwork = get_network(BackBoneTypes.NGP, CharacterTypes.Student)
+    # TeacherNetwork = get_network(BackBoneTypes.NGP, CharacterTypes.Teacher)
+    # StudentNetwork = get_network(BackBoneTypes.NGP, CharacterTypes.Student)
+    from SealNeRF.network import NeRFNetwork_NGP_Teacher as TeacherNetwork
+    from SealNeRF.network import NeRFNetwork_NGP_Student as StudentNetwork
 
     parser = argparse.ArgumentParser()
     parser.add_argument('path', type=str)
@@ -39,6 +41,7 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt', type=str, default='latest')
     parser.add_argument('--num_rays', type=int, default=4096,
                         help="num rays sampled per image for each training step")
+    parser.add_argument('--log2_hashmap_size', type=int, default=19)
     parser.add_argument('--cuda_ray', action='store_true',
                         help="use CUDA raymarching instead of pytorch")
     parser.add_argument('--max_steps', type=int, default=1024,
@@ -75,6 +78,7 @@ if __name__ == '__main__':
                         default=[0, 0, 0], help="offset of camera location")
     parser.add_argument('--dt_gamma', type=float, default=1/128,
                         help="dt_gamma (>=0) for adaptive ray marching. set to 0 to disable, >0 to accelerate rendering (but usually with worse quality)")
+    parser.add_argument('--dt_gamma_proxy', type=float, default=1/128)
     parser.add_argument('--min_near', type=float, default=0.2,
                         help="minimum near distance for camera")
     parser.add_argument('--density_thresh', type=float, default=10,
@@ -201,7 +205,7 @@ if __name__ == '__main__':
         min_near=opt.min_near,
         density_thresh=opt.density_thresh,
         bg_radius=opt.bg_radius,
-        log2_hashmap_size=19
+        log2_hashmap_size=opt.log2_hashmap_size
     )
     if not opt.gui:
         teacher_model.init_mapper(opt.seal_config)
@@ -216,7 +220,7 @@ if __name__ == '__main__':
         min_near=opt.min_near,
         density_thresh=opt.density_thresh,
         bg_radius=opt.bg_radius,
-        log2_hashmap_size=19
+        log2_hashmap_size=opt.log2_hashmap_size
     )
     if not opt.gui:
         model.init_mapper(mapper=teacher_model.seal_mapper)

@@ -757,15 +757,15 @@ def modify_rgb(rgb: torch.Tensor, modification: torch.Tensor, light_offset: floa
     N = rgb.shape[0]
     if N == 0:
         return rgb
-    hsl = rgb2hsl_torch(rgb.view(N, 3, 1))
-    hsl_modification = rgb2hsl_torch(modification.view(
+    hsl = rgb2hsv_torch(rgb.view(N, 3, 1))
+    hsl_modification = rgb2hsv_torch(modification.view(
         -1, 3, 1)).to(rgb.device, rgb.dtype)
     raw_l = hsl[:, 2, :]
     raw_l_avg = torch.mean(raw_l)
     raw_l_offset = raw_l - raw_l_avg
     hsl[:, :2, :] = hsl_modification[:, :2, :]
     hsl[:, 2, :] = torch.min(torch.tensor(1, device=rgb.device), torch.max(torch.tensor(0, device=rgb.device), hsl_modification[:, 2, :] + raw_l_offset + light_offset))
-    ret = hsl2rgb_torch(hsl).view(N, 3)
+    ret = hsv2rgb_torch(hsl).view(N, 3)
     return ret
 
 

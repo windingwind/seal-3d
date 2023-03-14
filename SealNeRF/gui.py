@@ -91,7 +91,8 @@ class OrbitCamera:
 STATE_PREVIEW = 0
 STATE_BRUSH = 1
 STATE_TEXTURE = 2
-STATE_TRAIN = 3
+STATE_ANCHOR = 3
+STATE_TRAIN = -1
 
 class NeRFGUI:
     def __init__(self, opt, teacher_trainer: OriginalTrainer, trainer: SealTrainer, train_loader=None, debug=True):
@@ -109,8 +110,8 @@ class NeRFGUI:
             "type": "brush",
             "normal": [1, 0, 0],
             "brushType": [],
-            "brushDepth": 0.5,
-            "brushPressure": 0.01,
+            "brushDepth": 0.6,
+            "brushPressure": 0.02,
             "attenuationDistance": 0.02,
             "attenuationMode": "dry",
             "simplifyVoxel": 16
@@ -127,6 +128,13 @@ class NeRFGUI:
 
         self.texture_tl = self.texture_br = None
         self.active_texture = None
+        self.active_texture_path = None
+
+        self.anchor_uv = []
+        self.anchor_points = None
+        self.anchor_lookat = None
+        self.anchor_dir = [0.0, 0.1, 0.0]
+        self.anchor_radius = 0.03
 
         self.state = STATE_PREVIEW
         self.step = 0  # training step
@@ -135,14 +143,18 @@ class NeRFGUI:
         self.trainer = trainer
         self.render_trainer = trainer
         self.train_recorder = torch.cuda.Event(enable_timing=True)
+        self.frame_recorder = None
         self.is_pretraining = False
         self.pretrain_only = False
+        self.use_time_limit = False
+        self.time_limit = 60
         self.train_loader = train_loader
         if train_loader is not None:
             self.trainer.error_map = train_loader._data.error_map
 
         self.render_buffer = np.zeros((self.H, self.W, 3), dtype=np.float32)
         self.need_update = True  # camera moved, should reset accumulation
+        self.force_update = False
         self.spp = 1  # sample per pixel
         self.mode = 'image'  # choose from ['image', 'depth']
 
@@ -177,14 +189,23 @@ class NeRFGUI:
         if self.is_pretraining and self.step > self.trainer.pretraining_epochs:
             t_pretrain = self.train_recorder.elapsed_time(ender)
             self.trainer.log(f"[INFO] Pretraining time: {t_pretrain/1000:.4f}s")
-            self.is_pretraining = False
+            # self.is_pretraining = False
+            self.force_update = True
             if self.pretrain_only:
+                self.state = STATE_PREVIEW
+                self.is_pretraining = False
+                dpg.configure_item(
+                    "_button_train", label="start")
+        if self.use_time_limit:
+            t_training = self.train_recorder.elapsed_time(ender)
+            if t_training / 1000 > self.time_limit:
+                self.trainer.log(f"[INFO] Training end with time: {t_training / 1000:.4f}s")
                 self.state = STATE_PREVIEW
                 dpg.configure_item(
                     "_button_train", label="start")
         self.need_update = True
 
-        dpg.set_value("_log_train_time", f'{t:.4f}ms ({int(1000/t)} FPS)')
+        # dpg.set_value("_log_train_time", f'{t:.4f}ms ({int(1000/t)} FPS)')
         # dpg.set_value(
         #     "_log_train_log", f'step = {self.step: 5d} (+{self.train_steps: 2d}), loss = {outputs["loss"]:.4f}, lr = {outputs["lr"]:.5f}')
 
@@ -196,10 +217,12 @@ class NeRFGUI:
             self.train_steps = train_steps
 
     def prepare_buffer(self, outputs):
+
         def mix_brush(img, mask, color, alpha=1.0):
             mask = np.sum(mask, axis=0)
             return np.where(mask > 0, color[np.newaxis,np.newaxis,:] * alpha + img * (1 - alpha), img)
             # return np.where(mask, color[np.newaxis,np.newaxis,:], color[np.newaxis,np.newaxis,:])
+        
         def mix_texture(img, x1, x2, y1, y2, texture):
             if texture.shape[-1] == 3:
                 img[y1:y2,x1:x2,:] = texture
@@ -212,6 +235,18 @@ class NeRFGUI:
                 return img
             else:
                 raise ValueError()
+        
+        def mix_anchor(img, uv):
+            if len(uv) == 2:
+                return cv2.line(outputs['image'], uv[0], uv[1], color=(1,0,0), thickness=2)
+            elif len(uv) == 3:
+                img = cv2.line(outputs['image'], uv[0], uv[1], color=(1,0,0), thickness=2)
+                img = cv2.line(img, uv[0], uv[2], color=(1,0,0), thickness=2)
+                img = cv2.line(img, uv[1], uv[2], color=(1,0,0), thickness=2)
+                cu = (uv[0][0] + uv[1][0] + uv[2][0]) // 3
+                cv = (uv[0][1] + uv[1][1] + uv[2][1]) // 3
+                img = cv2.arrowedLine(img, (cu, cv), self.anchor_lookat, (0,0,1), thickness=2)
+                return img
 
         if self.mode == 'image':
             if self.state == STATE_BRUSH:
@@ -226,6 +261,23 @@ class NeRFGUI:
                     x1, y1 = self.texture_tl
                     x2, y2 = self.texture_br
                     return mix_texture(outputs['image'], x1, x2, y1, y2, self.active_texture)
+            elif self.state == STATE_ANCHOR:
+                if len(self.anchor_uv) <= 1:
+                    return outputs['image']
+                else:
+                    return mix_anchor(outputs['image'], self.anchor_uv)
+            elif self.state == STATE_TRAIN:
+                img = outputs['image']
+                # ender = torch.cuda.Event(enable_timing=True)
+                # ender.record()
+                # torch.cuda.synchronize()
+                # t = int(np.round(self.train_recorder.elapsed_time(ender) / 1000))
+                if self.is_pretraining:
+                    return cv2.putText(img, "Pretrain", (self.W - 150, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color=(0,0,0), thickness=2)
+                    # return cv2.putText(img, f"Pretrain: {t}s", (self.W - 200, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color=(0,0,0), thickness=2)
+                else:
+                    return cv2.putText(img, "Finetune", (self.W - 150, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color=(0,0,0), thickness=2)
+                    # return cv2.putText(img, f"Pretrain: {t}s", (self.W - 200, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color=(0,0,0), thickness=2)
             else:
                 return outputs['image']
         else:
@@ -248,10 +300,36 @@ class NeRFGUI:
     def get_mask_pos(self, cluster=True):
         position = self.trainer.test_gui(
                 self.cam.pose, self.cam.intrinsics, self.W, self.H, self.bg_color, 1, 1, True)['pos']
-        return [position[mask[:,:,0] > 0] for mask in self.brush_mask]
+        if cluster:
+            return [position[mask[:,:,0] > 0] for mask in self.brush_mask]
+        else:
+            return position
+    
+    def update_anchor_lookat(self):
+        assert self.state == STATE_ANCHOR and len(self.anchor_points) == 3
+        anchor_centroid = np.mean(self.anchor_points, axis=0)
+        anchor_lookat = (anchor_centroid + self.anchor_dir).reshape(3, 1)
+        xyzw = np.ones((4, 1), dtype=np.float32)
+        xyzw[:3,:] = anchor_lookat
+        w2c = np.linalg.inv(self.cam.pose)
+        fx, fy, cx, cy = self.cam.intrinsics
+        K = np.eye(3, dtype=np.float32)
+        K[0,0] = fx; K[1,1] = fy; K[0,2] = cx; K[1,2] = cy
+        xyzw = (w2c @ xyzw).reshape(4)
+        xyz = (xyzw / xyzw[-1])[:3].reshape(3, 1)
+        uvw = (K @ xyz).reshape(3)
+        u, v = (uvw / uvw[-1])[:2]
+        u, v = int(u), int(v)
+        u = max(min(u, self.W - 1), 0)
+        v = max(min(v, self.H - 1), 0)
+        self.anchor_lookat = (u, v)
+        self.need_update = True
+
     
     def test_step(self):
         # TODO: seems we have to move data from GPU --> CPU --> GPU?
+        if hasattr(self.trainer, 'is_proxy_running') and self.trainer.is_proxy_running.value:
+            return
 
         if self.need_update or self.spp < self.opt.max_spp:
 
@@ -283,10 +361,10 @@ class NeRFGUI:
                     self.render_buffer * self.spp + self.prepare_buffer(outputs)) / (self.spp + 1)
                 self.spp += 1
 
-            dpg.set_value("_log_infer_time", f'{t:.4f}ms ({int(1000/t)} FPS)')
+            # dpg.set_value("_log_infer_time", f'{t:.4f}ms ({int(1000/t)} FPS)')
             dpg.set_value(
                 "_log_resolution", f'{int(self.downscale * self.W)}x{int(self.downscale * self.H)}')
-            dpg.set_value("_log_spp", self.spp)
+            # dpg.set_value("_log_spp", self.spp)
             dpg.set_value("_texture", self.render_buffer)
 
     def register_dpg(self):
@@ -323,18 +401,18 @@ class NeRFGUI:
                     dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 3, 3)
 
             # time
-            if not self.opt.test:
-                with dpg.group(horizontal=True):
-                    dpg.add_text("Train time: ")
-                    dpg.add_text("no data", tag="_log_train_time")
+            # if not self.opt.test:
+            #     with dpg.group(horizontal=True):
+            #         dpg.add_text("Train time: ")
+            #         dpg.add_text("no data", tag="_log_train_time")
 
-            with dpg.group(horizontal=True):
-                dpg.add_text("Infer time: ")
-                dpg.add_text("no data", tag="_log_infer_time")
+            # with dpg.group(horizontal=True):
+            #     dpg.add_text("Infer time: ")
+            #     dpg.add_text("no data", tag="_log_infer_time")
 
-            with dpg.group(horizontal=True):
-                dpg.add_text("SPP: ")
-                dpg.add_text("1", tag="_log_spp")
+            # with dpg.group(horizontal=True):
+            #     dpg.add_text("SPP: ")
+            #     dpg.add_text("1", tag="_log_spp")
 
             # train button
             if not self.opt.test:
@@ -361,11 +439,13 @@ class NeRFGUI:
                     wt = self.texture_br[0] - self.texture_tl[0]
                     texture = cv2.resize(texture, (wt, ht), interpolation=cv2.INTER_AREA)
                     self.active_texture = texture
+                    self.active_texture_path = app_data['file_path_name']
+                    dpg.configure_item("_control_window", collapsed=True)
                     self.need_update = True
 
                 with dpg.file_dialog(directory_selector=False, show=False, callback=callback_file_img, id="_img_selector", width=400,height=300):
-                    dpg.add_file_extension(".jpg")
                     dpg.add_file_extension(".png")
+                    dpg.add_file_extension(".jpg")
 
                 with dpg.collapsing_header(label="Train", default_open=False):
                     with dpg.group(horizontal=True, tag="_train"):
@@ -377,7 +457,7 @@ class NeRFGUI:
                                 dpg.configure_item(
                                     "_button_train", label="start")
                                 return
-                            if self.state != STATE_BRUSH and self.config is None:
+                            if self.state not in [STATE_BRUSH, STATE_TEXTURE, STATE_ANCHOR] and self.config is None:
                                 dpg.set_value("_log_train", "No edit configure!")
                             else:
                                 dpg.set_value("_log_train", "")
@@ -388,6 +468,18 @@ class NeRFGUI:
                                     self.brush_mask = []
                                     self.brush_config['brushType'] = []
                                     self.active_mask = np.zeros((self.H, self.W, 1), dtype=np.uint8)
+                                elif self.state == STATE_TEXTURE:
+                                    callback_texture_config(None, None)
+                                    dpg.configure_item(
+                                        "_button_texbox", label="select")
+                                    self.active_texture = self.active_texture_path = self.texture_br = self.texture_tl = None
+                                elif self.state == STATE_ANCHOR:
+                                    callback_anchor_config(None, None)
+                                    dpg.configure_item(
+                                        "_button_anchor", label="select")
+                                    self.anchor_uv = []
+                                    self.anchor_points = self.anchor_lookat = None
+
                                 self.trainer.model.init_mapper(self.opt.workspace, self.config)
                                 self.teacher_trainer.model.init_mapper(self.opt.workspace, self.config)
                                 self.trainer.init_pretraining(epochs=self.opt.pretraining_epochs,
@@ -403,13 +495,14 @@ class NeRFGUI:
                                 if self.trainer.pretraining_epochs > 0 and self.step <= self.trainer.pretraining_epochs:
                                     self.is_pretraining = True
                                     self.trainer.log(f"[INFO] Pretraining epochs: {self.trainer.pretraining_epochs}")
-                                torch.cuda.synchronize()
                                 self.train_recorder.record()
+                                torch.cuda.synchronize()
                                 dpg.configure_item(
                                     "_button_train", label="stop")
                                 dpg.configure_item("_control_window", collapsed=True)
                                 dpg.focus_item("_primary_window")
                                 self.state = STATE_TRAIN
+                                self.need_update = True
                         dpg.add_button(
                             label="start", tag="_button_train", callback=callback_train)
                         dpg.add_text(tag="_log_train")
@@ -419,10 +512,18 @@ class NeRFGUI:
                             self.pretrain_only = not self.pretrain_only
                         dpg.add_checkbox(label="pretrain only", callback=callback_pre_only, default_value=False)
 
+                    with dpg.group(horizontal=True):
+                        def callback_time_limit(sender, app_data):
+                            self.time_limit = app_data
+                        def callback_use_timelimit(sender, app_data):
+                            self.use_time_limit = not self.use_time_limit
+                        dpg.add_checkbox(label='time limit', callback=callback_use_timelimit, default_value=False)
+                        dpg.add_slider_int(tag='_slider_time', callback=callback_time_limit, default_value=self.time_limit, min_value=10, max_value=100)
+
                     # with dpg.collapsing_header(label="Pretrain options", default_open=False):
                     def callback_set_pretraining_epochs(sender, app_data):
                         self.opt.pretraining_epochs = app_data
-                    dpg.add_slider_int(label="epochs", min_value=0, max_value=200, default_value=self.opt.pretraining_epochs, callback=callback_set_pretraining_epochs)
+                    dpg.add_slider_int(label="epochs", min_value=0, max_value=300, default_value=self.opt.pretraining_epochs, callback=callback_set_pretraining_epochs)
                     
                     # save ckpt
                     with dpg.group(horizontal=True):
@@ -689,20 +790,47 @@ class NeRFGUI:
                         dpg.add_text("Area: ")
                         def callback_select_texbox(sender, app_data):
                             if self.state != STATE_TEXTURE:
-                                self.texture_br = self.texture_tl = self.active_texture = None
                                 self.state = STATE_TEXTURE
                                 dpg.configure_item(
                                     "_button_texbox", label="cancel")
                                 dpg.configure_item("_control_window", collapsed=True)
                                 dpg.focus_item("_primary_window")
                             else:
+                                self.config = None
                                 self.state = STATE_PREVIEW
                                 dpg.configure_item(
                                     "_button_texbox", label="select")
                                 self.need_update = True
+                            self.texture_br = self.texture_tl = self.active_texture = self.active_texture_path = None
                         dpg.add_button(
                             label="select", tag="_button_texbox", callback=callback_select_texbox)
                         dpg.bind_item_theme("_button_texbox", theme_button)
+
+                        def callback_texture_config(sender, app_data):
+                            if not self.state == STATE_TEXTURE:
+                                return
+                            if self.texture_br is None or self.texture_tl is None or self.active_texture is None:
+                                dpg.set_value('_log_texture', "Need to select area and open texture file first")
+                                return
+                            pos = self.get_mask_pos(False)
+                            x1, y1 = self.texture_tl
+                            x2, y2 = self.texture_br
+                            brush_config = self.brush_config.copy()
+                            brush_config['brushType'] = "line"
+                            self.config = dict(
+                                raw = pos[y1:y2,x1:x2,:].reshape(-1, 3).tolist(),
+                                imageConfig=dict(
+                                    path=self.active_texture_path,
+                                    o=pos[y1,x1].tolist(),
+                                    w=pos[y1,x2].tolist(),
+                                    h=pos[y2,x1].tolist()
+                                ),
+                                **brush_config
+                            )
+                            
+                        dpg.add_button(
+                            label="config", tag="_button_texconfig", callback=callback_texture_config)
+                        dpg.bind_item_theme("_button_texconfig", theme_button)
                     
                     with dpg.group(horizontal=True, tag="_teximg"):
                         dpg.add_text("Texture: ")
@@ -719,8 +847,60 @@ class NeRFGUI:
                             label="open", tag="_button_texopen", callback=callback_open_texture)
                         dpg.bind_item_theme("_button_texopen", theme_button)
                         dpg.add_text(tag='_log_texture')
+                
+                with dpg.collapsing_header(label="Anchor", default_open=False):
+                    with dpg.group(horizontal=True):
 
+                        def callback_anchor(sender, app_data):
+                            if self.state == STATE_ANCHOR:
+                                self.state = STATE_PREVIEW
+                                self.anchor_points = None
+                                self.anchor_uv = []
+                                self.anchor_lookat = None
+                                dpg.configure_item('_button_anchor', label="select")
+                                self.need_update = True
+                            else:
+                                self.state = STATE_ANCHOR
+                                dpg.configure_item("_control_window", collapsed=True)
+                                dpg.focus_item("_primary_window")
+                                dpg.configure_item('_button_anchor', label="cancel")
 
+                        dpg.add_button(label='select', tag='_button_anchor', callback=callback_anchor)
+                        dpg.bind_item_theme("_button_anchor", theme_button)
+
+                        def callback_anchor_config(sender, app_data):
+                            if self.state != STATE_ANCHOR or len(self.anchor_uv) < 3:
+                                return
+                            self.config = dict(
+                                raw=self.anchor_points.tolist(),
+                                type="anchor",
+                                translation=self.anchor_dir,
+                                radius=self.anchor_radius,
+                                scale=[1,1,1]
+                            )
+                        dpg.add_button(label='config', tag='_button_config_anchor', callback=callback_anchor_config)
+                        dpg.bind_item_theme("_button_config_anchor", theme_button)
+
+                    def callback_set_adir_x(sender, app_data):
+                        self.anchor_dir[0] = app_data
+                        if len(self.anchor_uv) == 3:
+                            self.update_anchor_lookat()
+                    def callback_set_adir_y(sender, app_data):
+                        self.anchor_dir[1] = app_data
+                        if len(self.anchor_uv) == 3:
+                            self.update_anchor_lookat()
+                    def callback_set_adir_z(sender, app_data):
+                        self.anchor_dir[2] = app_data
+                        if len(self.anchor_uv) == 3:
+                            self.update_anchor_lookat()
+
+                    dpg.add_slider_float(label="anchor direction x", tag="_slider_ax", min_value=-1.0, max_value=1.0, default_value=self.anchor_dir[0], callback=callback_set_adir_x)
+                    dpg.add_slider_float(label="anchor direction y", tag="_slider_ay", min_value=-1.0, max_value=1.0, default_value=self.anchor_dir[1], callback=callback_set_adir_y)
+                    dpg.add_slider_float(label="anchor direction z", tag="_slider_az", min_value=-1.0, max_value=1.0, default_value=self.anchor_dir[2], callback=callback_set_adir_z)
+
+                    def callback_set_aradius(sender, app_data):
+                        self.anchor_radius = app_data
+                    dpg.add_input_float(label="anchor radius", tag="_slider_ar", min_clamped=True, min_value=0.0, max_value=0.2, default_value=self.anchor_radius, callback=callback_set_aradius)
 
 
             with dpg.collapsing_header(label="Camera", default_open=True):
@@ -888,6 +1068,8 @@ class NeRFGUI:
                     self.texture_br = (max(x1, x2), max(y1, y2))
                     # self.texture_br = get_mouse_pos_int()
                 self.need_update = True
+            elif self.state == STATE_ANCHOR:
+                return
             else:
                 if self.cam_fix:
                     return
@@ -944,7 +1126,23 @@ class NeRFGUI:
         #     self.last_pos = dpg.get_mouse_pos()
 
         def callback_release_brush(sender, app_data):
-            if self.state not in [STATE_BRUSH, STATE_TEXTURE]:
+            if self.state not in [STATE_BRUSH, STATE_TEXTURE, STATE_ANCHOR]:
+                return
+            if self.state == STATE_ANCHOR:
+                if not dpg.is_item_focused("_primary_window"):
+                    return
+                if len(self.anchor_uv) == 3:
+                    return
+                uv = get_mouse_pos_int()
+                print(uv)
+                self.anchor_uv.append(uv)
+                if len(self.anchor_uv) == 3:
+                    pos = self.get_mask_pos(False)
+                    self.anchor_points = np.array([
+                        pos[i, j] for (j, i) in self.anchor_uv
+                    ], dtype=np.float32)
+                    self.update_anchor_lookat()
+                self.need_update = True
                 return
             if not dpg.is_item_focused("_primary_window"):
                 self.brushing = False
@@ -981,8 +1179,10 @@ class NeRFGUI:
             dpg.add_mouse_release_handler(button=dpg.mvMouseButton_Left, callback=callback_release_brush)
             dpg.add_key_press_handler(key=dpg.mvKey_B, callback=callback_press_b)
 
+        # dpg.create_viewport(title='seal-gui', width=self.W,
+        #                     height=self.H + 60, resizable=True, decorated=True)
         dpg.create_viewport(title='seal-gui', width=self.W,
-                            height=self.H + 60, resizable=True, decorated=True)
+                            height=self.H, resizable=False, decorated=False)
 
         # TODO: seems dearpygui doesn't support resizing texture...
         # def callback_resize(sender, app_data):
@@ -1017,6 +1217,24 @@ class NeRFGUI:
             # update texture every frame
             # if self.training:
             if self.state == STATE_TRAIN:
+                # self.test_step()
                 self.train_step()
-            self.test_step()
+                if self.frame_recorder is None:
+                    self.frame_recorder = torch.cuda.Event(enable_timing=True)
+                    self.frame_recorder.record()
+                    self.test_step()
+                else:
+                    frame_ender = torch.cuda.Event(enable_timing=True)
+                    frame_ender.record()
+                    torch.cuda.synchronize()
+                    t_frame = self.frame_recorder.elapsed_time(frame_ender)
+                    # print(t_frame)
+                    if t_frame >= 1000 / 2 or self.force_update: # fix 5 frames while training
+                        self.frame_recorder.record()
+                        self.test_step()
+                        if self.force_update:
+                            self.force_update = False
+                            self.is_pretraining = False
+            else:
+                self.test_step()
             dpg.render_dearpygui_frame()

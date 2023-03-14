@@ -2,7 +2,7 @@ from .types import BackBoneTypes, CharacterTypes
 from .renderer import SealNeRFTeacherRenderer, SealNeRFStudentRenderder, SealNeRFRenderer
 from nerf.network import NeRFNetwork as NGPNetwork
 from tensoRF.network import NeRFNetwork as TensoRFNetwork
-
+import sys
 
 def get_network(backbone: BackBoneTypes, character: CharacterTypes):
     """
@@ -10,8 +10,11 @@ def get_network(backbone: BackBoneTypes, character: CharacterTypes):
     """
     NeRFNetwork = network_constructor(
         backbone_refs[backbone], backbone_funcs[backbone])
-    return type(f'NeRFNetwork_{backbone.name}_{character.name}', (character_refs[character], NeRFNetwork), {})
-
+    network_name = f'NeRFNetwork_{backbone.name}_{character.name}'
+    network_type = type(f'NeRFNetwork_{backbone.name}_{character.name}', (character_refs[character], NeRFNetwork), {})
+    # setattr(sys.modules[__name__], network_name, network_type)
+    # print(sys.modules[__name__], network_name, network_type)
+    return network_type
 
 def network_constructor(ref, func_names: list):
     """
@@ -25,6 +28,8 @@ def network_constructor(ref, func_names: list):
     NeRFNetwork._self = NeRFNetwork
     return NeRFNetwork
 
+# class NeRFNetwork_NGP_Teacher(NGPNetwork):
+#     __init__ = 
 
 backbone_funcs = {
     BackBoneTypes.NGP: ['__init__', 'forward',
@@ -42,3 +47,7 @@ character_refs = {
     CharacterTypes.Student: SealNeRFStudentRenderder,
     CharacterTypes.Teacher: SealNeRFTeacherRenderer
 }
+
+
+NeRFNetwork_NGP_Teacher = get_network(BackBoneTypes.NGP, CharacterTypes.Teacher)
+NeRFNetwork_NGP_Student = get_network(BackBoneTypes.NGP, CharacterTypes.Student)

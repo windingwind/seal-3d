@@ -6,6 +6,7 @@ import torch.multiprocessing as mp
 from nerf.utils import get_rays
 from nerf.provider import NeRFDataset, rand_poses
 from .seal_utils import SealMapper
+import dearpygui.dearpygui as dpg
 
 
 class SealDataset(NeRFDataset):
@@ -41,8 +42,13 @@ class SealDataset(NeRFDataset):
                     n_batch += 1
                 with torch.cuda.amp.autocast(enabled=self.fp16):
                     for i in range(n_batch):
+                        if dpg.is_dearpygui_running():
+                            dpg.render_dearpygui_frame()
+                        # dt_gamma_bak = self.opt.dt_gamma
+                        # self.opt.dt_gamma = 1 / 256
                         current_teacher_outputs = model.render(
-                            rays_o[:, i*batch_size:(i+1)*batch_size, :], rays_d[:, i*batch_size:(i+1)*batch_size, :], staged=True, bg_color=None, perturb=False, force_all_rays=True, dt_gamma=1/128, **vars(self.opt))
+                            rays_o[:, i*batch_size:(i+1)*batch_size, :], rays_d[:, i*batch_size:(i+1)*batch_size, :], staged=True, bg_color=None, perturb=False, force_all_rays=True, **vars(self.opt))
+                        # self.opt.dt_gamma = dt_gamma_bak
                         proxied_images.append(current_teacher_outputs['image'])
                         proxied_depths.append(current_teacher_outputs['depth'])
                 proxied_images = torch.nan_to_num(
@@ -62,11 +68,9 @@ class SealDataset(NeRFDataset):
         self.proxy_flag = True
 
     def proxy_dataset_async(self, model, flag, n_batch: int = 1):
-        def task(dataset, model, n_batch):
-            self.proxy_dataset(dataset, model, n_batch)
-            flag.value = True
-        p = mp.Process(target=task, args=(self, model, n_batch))
-        p.start()
+        # p = mp.Process(target=task, args=(self, model, flag, n_batch))
+        # p.start()
+        mp.spawn(fn=task, args=(self, model, flag, n_batch))
     
     def collate(self, index):
 
@@ -175,3 +179,8 @@ class SealRandomDataset(NeRFDataset):
             data['images_shape'] = [B, *self.image_shape]
 
         return data
+
+
+def task(i, dataset, model, flag, n_batch):
+    dataset.proxy_dataset(model, n_batch)
+    flag.value = False
