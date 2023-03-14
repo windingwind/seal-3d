@@ -396,7 +396,7 @@ class SealNeRFTeacherRenderer(SealNeRFRenderer):
                 sigmas = self.density_scale * sigmas
 
                 if self.seal_mapper is not None:
-                    rgbs[mapped_mask] = self.seal_mapper.map_color(mapped_xyzs[mapped_mask], mapped_dirs[mapped_mask], rgbs[mapped_mask])
+                    rgbs[mapped_mask] = self.seal_mapper.map_color(mapped_xyzs[mapped_mask], mapped_dirs[mapped_mask], rgbs[mapped_mask]).to(rgbs.dtype)
 
                 raymarching.composite_rays(
                     n_alive, n_step, rays_alive, rays_t, sigmas, rgbs, deltas, weights_sum, depth, image, T_thresh)
