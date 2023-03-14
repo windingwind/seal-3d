@@ -227,7 +227,7 @@ class SealBBoxMapper(SealMapper):
             self.map_data['hsv'] = seal_config['hsv']
         if 'rgb' in seal_config:
             self.map_data['rgb'] = seal_config['rgb']
-            self.map_data['rgb_light_offset'] = seal_config['rgbLightOffset'] if 'rgbLightOffset' in seal_config else None
+            self.map_data['rgb_light_offset'] = seal_config['rgbLightOffset'] if 'rgbLightOffset' in seal_config else 0
         if 'mapSource' in seal_config and seal_config['mapSource']:
             self.map_data['empty_bound'] = self.from_mesh.bounds
             self.map_data['map_source'] = seal_config['mapSource']
@@ -378,9 +378,9 @@ class SealBrushMapper(SealMapper):
             self.map_data['hsv'] = seal_config['hsv']
         if 'rgb' in seal_config:
             self.map_data['rgb'] = seal_config['rgb']
-            self.map_data['rgb_light_offset'] = seal_config['rgbLightOffset'] if 'rgbLightOffset' in seal_config else None
+            self.map_data['rgb_light_offset'] = seal_config['rgbLightOffset'] if 'rgbLightOffset' in seal_config else 0
         if 'imageConfig' in seal_config:
-            self.map_data['rgb_light_offset'] = seal_config['rgbLightOffset'] if 'rgbLightOffset' in seal_config else None
+            self.map_data['rgb_light_offset'] = seal_config['rgbLightOffset'] if 'rgbLightOffset' in seal_config else 0
             image_conf = seal_config['imageConfig']
             raw_image = cv2.imread(
                 image_conf['path'], cv2.IMREAD_UNCHANGED)
@@ -508,7 +508,7 @@ class SealAnchorMapper(SealMapper):
             self.map_data['hsv'] = seal_config['hsv']
         if 'rgb' in seal_config:
             self.map_data['rgb'] = seal_config['rgb']
-            self.map_data['rgb_light_offset'] = seal_config['rgbLightOffset'] if 'rgbLightOffset' in seal_config else None
+            self.map_data['rgb_light_offset'] = seal_config['rgbLightOffset'] if 'rgbLightOffset' in seal_config else 0
         self.map_data_conversion(force=True)
 
     def map_to_origin(self, points: torch.Tensor, dirs: torch.Tensor = None):
@@ -750,7 +750,7 @@ def modify_hsv(rgb: torch.Tensor, modification: torch.Tensor):
     return hsv2rgb_torch(hsv).view(N, 3)
 
 
-def modify_rgb(rgb: torch.Tensor, modification: torch.Tensor, light_offset: float = None):
+def modify_rgb(rgb: torch.Tensor, modification: torch.Tensor, light_offset: float = 0):
     """
     the original color is not correct makes the converted hsl value meaningless
     """
