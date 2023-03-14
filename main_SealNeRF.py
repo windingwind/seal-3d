@@ -201,6 +201,7 @@ if __name__ == '__main__':
         min_near=opt.min_near,
         density_thresh=opt.density_thresh,
         bg_radius=opt.bg_radius,
+        log2_hashmap_size=19
     )
     if not opt.gui:
         teacher_model.init_mapper(opt.seal_config)
@@ -215,6 +216,7 @@ if __name__ == '__main__':
         min_near=opt.min_near,
         density_thresh=opt.density_thresh,
         bg_radius=opt.bg_radius,
+        log2_hashmap_size=19
     )
     if not opt.gui:
         model.init_mapper(mapper=teacher_model.seal_mapper)
@@ -233,8 +235,8 @@ if __name__ == '__main__':
             density_thresh=sec_opt.density_thresh,
             bg_radius=sec_opt.bg_radius,
         )
-        # if not opt.gui:
-        #     sec_teacher_model.init_mapper(mapper=teacher_model.seal_mapper)
+        if not opt.gui:
+            sec_teacher_model.init_mapper(mapper=teacher_model.seal_mapper)
         sec_teacher_model.train(False)
         print(sec_teacher_model)
 

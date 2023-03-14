@@ -38,11 +38,12 @@ class SealDataset(NeRFDataset):
                 batch_size = total_batches // n_batch
                 if (total_batches % n_batch):
                     n_batch += 1
-                for i in range(n_batch):
-                    current_teacher_outputs = model.render(
-                        rays_o[:, i*batch_size:(i+1)*batch_size, :], rays_d[:, i*batch_size:(i+1)*batch_size, :], staged=True, bg_color=None, perturb=False, force_all_rays=True, **vars(self.opt))
-                    proxied_images.append(current_teacher_outputs['image'])
-                    proxied_depths.append(current_teacher_outputs['depth'])
+                with torch.cuda.amp.autocast(enabled=self.fp16):
+                    for i in range(n_batch):
+                        current_teacher_outputs = model.render(
+                            rays_o[:, i*batch_size:(i+1)*batch_size, :], rays_d[:, i*batch_size:(i+1)*batch_size, :], staged=True, bg_color=None, perturb=False, force_all_rays=True, **vars(self.opt))
+                        proxied_images.append(current_teacher_outputs['image'])
+                        proxied_depths.append(current_teacher_outputs['depth'])
                 proxied_images = torch.nan_to_num(
                     torch.concat(proxied_images, 1), nan=0.)
                 proxied_depths = torch.nan_to_num(

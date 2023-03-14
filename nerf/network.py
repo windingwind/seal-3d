@@ -20,6 +20,7 @@ class NeRFNetwork(NeRFRenderer):
                  num_layers_bg=2,
                  hidden_dim_bg=64,
                  bound=1,
+                 log2_hashmap_size=19,
                  **kwargs,
                  ):
         super(self._self, self).__init__(bound, **kwargs)
@@ -28,7 +29,7 @@ class NeRFNetwork(NeRFRenderer):
         self.num_layers = num_layers
         self.hidden_dim = hidden_dim
         self.geo_feat_dim = geo_feat_dim
-        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * bound, log2_hashmap_size=18)
+        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * bound, log2_hashmap_size=log2_hashmap_size)
 
         sigma_net = []
         for l in range(num_layers):
@@ -52,7 +53,7 @@ class NeRFNetwork(NeRFRenderer):
         self.encoder_dir, self.in_dim_dir = get_encoder(encoding_dir)
 
         # extra color encoder
-        self.encoder_color, self.in_dim_color = get_encoder(encoding, desired_resolution=2048 * bound, log2_hashmap_size=18)
+        self.encoder_color, self.in_dim_color = get_encoder(encoding, desired_resolution=2048 * bound, log2_hashmap_size=log2_hashmap_size)
         
         color_net =  []
         for l in range(num_layers_color):
