@@ -54,7 +54,7 @@ class SealMapper:
                 colors, self.map_data['hsv'])
         if 'rgb' in self.map_data:
             colors = modify_rgb(
-                colors, self.map_data['rgb'], self.map_data['rgb_keep_rate'], self.map_data['rgb_light_offset'])
+                colors, self.map_data['rgb'], self.map_data['rgb_light_offset'])
         if 'image' in self.map_data:
             image = self.map_data['image']
             # assume C=3
@@ -75,7 +75,7 @@ class SealMapper:
                 v_op @ v_oh.T / len_oh**2 * H)), torch.tensor(H - 1, device=points.device)).to(torch.long)
             mask = self.map_data['image_mask'][idx_h, idx_w][None].T
             modified_colors = modify_rgb(
-                colors, image[idx_h, idx_w], self.map_data['rgb_keep_rate'], self.map_data['rgb_light_offset'])
+                colors, image[idx_h, idx_w], self.map_data['rgb_light_offset'])
             colors = mask * modified_colors + (1-mask) * colors
 
         return colors
@@ -227,8 +227,7 @@ class SealBBoxMapper(SealMapper):
             self.map_data['hsv'] = seal_config['hsv']
         if 'rgb' in seal_config:
             self.map_data['rgb'] = seal_config['rgb']
-            self.map_data['rgb_keep_rate'] = seal_config['rgbKeepRate'] if 'rgbKeepRate' in seal_config else 0
-            self.map_data['rgb_light_offset'] = seal_config['rgbLightOffset'] if 'rgbLightOffset' in seal_config else None
+            self.map_data['rgb_light_offset'] = seal_config['rgbLightOffset'] if 'rgbLightOffset' in seal_config else 0
         if 'mapSource' in seal_config and seal_config['mapSource']:
             self.map_data['empty_bound'] = self.from_mesh.bounds
             self.map_data['map_source'] = seal_config['mapSource']
@@ -379,11 +378,9 @@ class SealBrushMapper(SealMapper):
             self.map_data['hsv'] = seal_config['hsv']
         if 'rgb' in seal_config:
             self.map_data['rgb'] = seal_config['rgb']
-            self.map_data['rgb_keep_rate'] = seal_config['rgbKeepRate'] if 'rgbKeepRate' in seal_config else 0
-            self.map_data['rgb_light_offset'] = seal_config['rgbLightOffset'] if 'rgbLightOffset' in seal_config else None
+            self.map_data['rgb_light_offset'] = seal_config['rgbLightOffset'] if 'rgbLightOffset' in seal_config else 0
         if 'imageConfig' in seal_config:
-            self.map_data['rgb_keep_rate'] = seal_config['rgbKeepRate'] if 'rgbKeepRate' in seal_config else 0
-            self.map_data['rgb_light_offset'] = seal_config['rgbLightOffset'] if 'rgbLightOffset' in seal_config else None
+            self.map_data['rgb_light_offset'] = seal_config['rgbLightOffset'] if 'rgbLightOffset' in seal_config else 0
             image_conf = seal_config['imageConfig']
             raw_image = cv2.imread(
                 image_conf['path'], cv2.IMREAD_UNCHANGED)
@@ -511,8 +508,7 @@ class SealAnchorMapper(SealMapper):
             self.map_data['hsv'] = seal_config['hsv']
         if 'rgb' in seal_config:
             self.map_data['rgb'] = seal_config['rgb']
-            self.map_data['rgb_keep_rate'] = seal_config['rgbKeepRate'] if 'rgbKeepRate' in seal_config else 0
-            self.map_data['rgb_light_offset'] = seal_config['rgbLightOffset'] if 'rgbLightOffset' in seal_config else None
+            self.map_data['rgb_light_offset'] = seal_config['rgbLightOffset'] if 'rgbLightOffset' in seal_config else 0
         self.map_data_conversion(force=True)
 
     def map_to_origin(self, points: torch.Tensor, dirs: torch.Tensor = None):
@@ -754,25 +750,21 @@ def modify_hsv(rgb: torch.Tensor, modification: torch.Tensor):
     return hsv2rgb_torch(hsv).view(N, 3)
 
 
-def modify_rgb(rgb: torch.Tensor, modification: torch.Tensor, keep_rate: float = 0, light_offset: float = None):
+def modify_rgb(rgb: torch.Tensor, modification: torch.Tensor, light_offset: float = 0):
     """
     the original color is not correct makes the converted hsl value meaningless
     """
     N = rgb.shape[0]
     if N == 0:
         return rgb
-    # return modification.repeat(N).view(N, 3).to(rgb.device, rgb.dtype)
     hsl = rgb2hsl_torch(rgb.view(N, 3, 1))
     hsl_modification = rgb2hsl_torch(modification.view(
         -1, 3, 1)).to(rgb.device, rgb.dtype)
-    if light_offset is None:
-        raw_l_avg = torch.mean(hsl[:, 2, :])
-        mod_l_avg = torch.mean(hsl_modification[:, 2, :])
-        light_offset = mod_l_avg - raw_l_avg
-    hsl[:, 0, :] = hsl_modification[:, 0, :]
-    hsl[:, 1, :] = hsl_modification[:, 1, :]
-    hsl[:, 2, :] = torch.min(torch.tensor(1, device=rgb.device), torch.max(torch.tensor(0, device=rgb.device), hsl_modification[:, 2, :]
-                             * keep_rate + hsl[:, 2, :] * (1-keep_rate) + light_offset))
+    raw_l = hsl[:, 2, :]
+    raw_l_avg = torch.mean(raw_l)
+    raw_l_offset = raw_l - raw_l_avg
+    hsl[:, :2, :] = hsl_modification[:, :2, :]
+    hsl[:, 2, :] = torch.min(torch.tensor(1, device=rgb.device), torch.max(torch.tensor(0, device=rgb.device), hsl_modification[:, 2, :] + raw_l_offset + light_offset))
     ret = hsl2rgb_torch(hsl).view(N, 3)
     return ret
 

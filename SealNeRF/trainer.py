@@ -86,7 +86,7 @@ def init(self: trainer_types, name, opt, student_model, teacher_model, proxy_tra
 def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
                      local_point_step=0.001, local_angle_step=45,
                      surrounding_point_step=0.01, surrounding_angle_step=45, surrounding_bounds_extend=0.2,
-                     global_point_step=0.05, global_angle_step=45):
+                     global_point_step=0.05, global_angle_step=45, no_debug: bool = False):
     """
     call this until seal_mapper is initialized
     """
@@ -100,6 +100,7 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
         # sample points and dirs from seal mapper
         self.pretraining_data = {}
 
+        t = time.time()
         # prepare local data and gt
         if local_point_step > 0:
             local_bounds = self.teacher_model.seal_mapper.map_data['force_fill_bound']
@@ -152,6 +153,9 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
                 'steps': local_steps
             }
             self.is_pretraining = True
+
+        print(f"Local x generation: {time.time()-t}")
+        t = time.time()
 
         # prepare surrounding data and gt
         if surrounding_point_step > 0:
@@ -206,6 +210,9 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
                 'steps': surrounding_steps
             }
 
+        print(f"Surrounding x generation: {time.time()-t}")
+        t = time.time()
+
         # prepare global data and gt
         if global_point_step > 0:
             global_bounds = self.model.aabb_train.view(2, 3)
@@ -242,15 +249,19 @@ def init_pretraining(self: trainer_types, epochs=0, batch_size=4096, lr=0.07,
                 'steps': global_steps
             }
 
-        visualize_dir = os.path.join(self.workspace, 'pretrain_vis')
-        if not os.path.exists(visualize_dir):
-            os.makedirs(visualize_dir)
-        for k, v in self.pretraining_data.items():
-            trimesh.PointCloud(v['points'].view(-1, 3).cpu().numpy(), v['color'].view(-1, 3).cpu().numpy()).export(
-                os.path.join(visualize_dir, f'{k}.ply'))
+        print(f"Global x generation: {time.time()-t}")
+        t = time.time()
+
+        if not no_debug:
+            visualize_dir = os.path.join(self.workspace, 'pretrain_vis')
+            if not os.path.exists(visualize_dir):
+                os.makedirs(visualize_dir)
+            for k, v in self.pretraining_data.items():
+                trimesh.PointCloud(v['points'].view(-1, 3).cpu().numpy(), v['color'].view(-1, 3).cpu().numpy()).export(
+                    os.path.join(visualize_dir, f'{k}.ply'))
 
 
-def train(self: trainer_types, train_loader, valid_loader, max_epochs):
+def train(self: trainer_types, train_loader, valid_loader, max_epochs, proxy_batch: int = 1):
     if self.opt.extra_epochs is not None:
         max_epochs = self.epoch + self.opt.extra_epochs
 
@@ -262,9 +273,9 @@ def train(self: trainer_types, train_loader, valid_loader, max_epochs):
     if not self.teacher_model.density_bitfield_hacked:
         self.teacher_model.hack_bitfield()
     train_loader.extra_info['provider'].proxy_dataset(
-        self.teacher_model, n_batch=5)
+        self.teacher_model, n_batch=proxy_batch)
     valid_loader.extra_info['provider'].proxy_dataset(
-        self.teacher_model, n_batch=5)
+        self.teacher_model, n_batch=proxy_batch)
 
     # mark untrained region (i.e., not covered by any camera from the training dataset)
     if self.model.cuda_ray:
@@ -290,11 +301,11 @@ def train(self: trainer_types, train_loader, valid_loader, max_epochs):
         N_pixles = train_loader.extra_info['H'] * \
             train_loader.extra_info['W']
         self.proxy_cache_mask = torch.zeros(
-            N_poses, N_pixles, dtype=torch.bool)
+            N_poses, N_pixles, dtype=torch.bool, device=self.device)
         self.proxy_cache_image = torch.zeros(
-            N_poses, N_pixles, 3, dtype=torch.float)
+            N_poses, N_pixles, 3, dtype=torch.float, device=self.device)
         self.proxy_cache_depth = torch.zeros(
-            N_poses, N_pixles, dtype=torch.float)
+            N_poses, N_pixles, dtype=torch.float, device=self.device)
 
     first_epoch = self.epoch + 1
 
@@ -353,7 +364,7 @@ def pretrain_one_epoch(self: trainer_types, silent=False):
     """
     self.set_lr(self.pretraining_lr)
 
-    if not self.model.density_bitfield_hacked:
+    if not self.model.density_bitfield_hacked and hasattr(self, 'force_fill_bitfield_indices'):
         self.model.hack_bitfield()
 
     if not silent:
@@ -525,8 +536,8 @@ def proxy_truth(self: trainer_types, data, all_ray: bool = True, use_cache: bool
     rays_d = data['rays_d']  # [B, N, 3]
 
     if use_cache:
-        rays_o = rays_o[compute_mask]
-        rays_d = rays_d[compute_mask]
+        rays_o = rays_o[compute_mask][None]
+        rays_d = rays_d[compute_mask][None]
 
     if not is_skip_computing:
         teacher_outputs = {
@@ -553,9 +564,11 @@ def proxy_truth(self: trainer_types, data, all_ray: bool = True, use_cache: bool
     if use_cache:
         if not is_skip_computing:
             self.proxy_cache_image[data['data_index'], data['pixel_index']
-                                   [compute_mask]] = torch.nan_to_num(teacher_outputs['image'], nan=0.).detach().cpu()
+                                   [compute_mask]] = torch.nan_to_num(teacher_outputs['image'], nan=0.).detach()
             self.proxy_cache_depth[data['data_index'], data['pixel_index']
-                                   [compute_mask]] = torch.nan_to_num(teacher_outputs['depth'], nan=0.).detach().cpu()
+                                   [compute_mask]] = torch.nan_to_num(teacher_outputs['depth'], nan=0.).detach()
+            self.proxy_cache_mask[data['data_index'], data['pixel_index']
+                                   [compute_mask]] = True
         data['images'] = self.proxy_cache_image[data['data_index'],
                                                 data['pixel_index']].to(self.device)
         data['depths'] = self.proxy_cache_depth[data['data_index'],
