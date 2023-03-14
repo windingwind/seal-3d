@@ -93,8 +93,8 @@ class SealDataset(NeRFDataset):
             'rays_o': rays['rays_o'],
             'rays_d': rays['rays_d'],
             'skip_proxy': self.proxy_flag,
-            'data_index': index,
-            'pixel_index': rays['inds'].to('cpu') if 'inds' in rays else None
+            'data_index': torch.tensor(index),
+            'pixel_index': rays['inds'] if 'inds' in rays else None
         }
 
         if self.images is not None:

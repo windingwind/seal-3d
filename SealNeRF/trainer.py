@@ -301,11 +301,11 @@ def train(self: trainer_types, train_loader, valid_loader, max_epochs, proxy_bat
         N_pixles = train_loader.extra_info['H'] * \
             train_loader.extra_info['W']
         self.proxy_cache_mask = torch.zeros(
-            N_poses, N_pixles, dtype=torch.bool)
+            N_poses, N_pixles, dtype=torch.bool, device=self.device)
         self.proxy_cache_image = torch.zeros(
-            N_poses, N_pixles, 3, dtype=torch.float)
+            N_poses, N_pixles, 3, dtype=torch.float, device=self.device)
         self.proxy_cache_depth = torch.zeros(
-            N_poses, N_pixles, dtype=torch.float)
+            N_poses, N_pixles, dtype=torch.float, device=self.device)
 
     first_epoch = self.epoch + 1
 
@@ -536,8 +536,8 @@ def proxy_truth(self: trainer_types, data, all_ray: bool = True, use_cache: bool
     rays_d = data['rays_d']  # [B, N, 3]
 
     if use_cache:
-        rays_o = rays_o[compute_mask]
-        rays_d = rays_d[compute_mask]
+        rays_o = rays_o[compute_mask][None]
+        rays_d = rays_d[compute_mask][None]
 
     if not is_skip_computing:
         teacher_outputs = {
@@ -564,9 +564,11 @@ def proxy_truth(self: trainer_types, data, all_ray: bool = True, use_cache: bool
     if use_cache:
         if not is_skip_computing:
             self.proxy_cache_image[data['data_index'], data['pixel_index']
-                                   [compute_mask]] = torch.nan_to_num(teacher_outputs['image'], nan=0.).detach().cpu()
+                                   [compute_mask]] = torch.nan_to_num(teacher_outputs['image'], nan=0.).detach()
             self.proxy_cache_depth[data['data_index'], data['pixel_index']
-                                   [compute_mask]] = torch.nan_to_num(teacher_outputs['depth'], nan=0.).detach().cpu()
+                                   [compute_mask]] = torch.nan_to_num(teacher_outputs['depth'], nan=0.).detach()
+            self.proxy_cache_mask[data['data_index'], data['pixel_index']
+                                   [compute_mask]] = True
         data['images'] = self.proxy_cache_image[data['data_index'],
                                                 data['pixel_index']].to(self.device)
         data['depths'] = self.proxy_cache_depth[data['data_index'],
