@@ -18,10 +18,8 @@ from loss import huber_loss
 if __name__ == '__main__':
     TeacherTrainer = get_trainer(BackBoneTypes.NGP, CharacterTypes.Teacher)
     StudentTrainer = get_trainer(BackBoneTypes.NGP, CharacterTypes.Student)
-    # TeacherNetwork = get_network(BackBoneTypes.NGP, CharacterTypes.Teacher)
-    # StudentNetwork = get_network(BackBoneTypes.NGP, CharacterTypes.Student)
-    from SealNeRF.network import NeRFNetwork_NGP_Teacher as TeacherNetwork
-    from SealNeRF.network import NeRFNetwork_NGP_Student as StudentNetwork
+    TeacherNetwork = get_network(BackBoneTypes.NGP, CharacterTypes.Teacher)
+    StudentNetwork = get_network(BackBoneTypes.NGP, CharacterTypes.Student)
 
     parser = argparse.ArgumentParser()
     parser.add_argument('path', type=str)

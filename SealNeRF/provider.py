@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -42,7 +43,8 @@ class SealDataset(NeRFDataset):
                     n_batch += 1
                 with torch.cuda.amp.autocast(enabled=self.fp16):
                     for i in range(n_batch):
-                        if dpg.is_dearpygui_running():
+                        # refresh frame to prevent gui from being no response
+                        if 'DISPLAY' in os.environ and dpg.is_dearpygui_running():
                             dpg.render_dearpygui_frame()
                         # dt_gamma_bak = self.opt.dt_gamma
                         # self.opt.dt_gamma = 1 / 256
@@ -67,11 +69,6 @@ class SealDataset(NeRFDataset):
         self.depths = torch.stack(depths, dim=0)
         self.proxy_flag = True
 
-    def proxy_dataset_async(self, model, flag, n_batch: int = 1):
-        # p = mp.Process(target=task, args=(self, model, flag, n_batch))
-        # p.start()
-        mp.spawn(fn=task, args=(self, model, flag, n_batch))
-    
     def collate(self, index):
 
         B = len(index)  # a list of length 1
@@ -179,8 +176,3 @@ class SealRandomDataset(NeRFDataset):
             data['images_shape'] = [B, *self.image_shape]
 
         return data
-
-
-def task(i, dataset, model, flag, n_batch):
-    dataset.proxy_dataset(model, n_batch)
-    flag.value = False
