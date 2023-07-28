@@ -6,13 +6,13 @@ The official implementation of the paper [Seal-3D: Interactive Pixel-Level Editi
 
 Accepted by ICCV 2023.
 
+Project Page: https://windingwind.github.io/seal-3d/
+
+ArXiv Link: TBD
+
+ArXiv PDF: TBD
+
 GitHub Repo: https://github.com/windingwind/seal-3d
-
-Project Page: TBD
-
-Arxiv Link: TBD
-
-Arxiv PDF: TBD
 
 This project is built on [ashawkey/torch-ngp](https://github.com/ashawkey/torch-ngp)'s NGP and TensoRF implementation.
 
@@ -63,8 +63,6 @@ We use the same data format as instant-ngp. Please download and put them under `
 
 To find more details about the supported dataset, please refer to [torch-npg#usage](https://github.com/ashawkey/torch-ngp#usage).
 
-The `seal_config` files used by examples in the paper can be downloaded from [Google Drive link](https://drive.google.com/file/d/1PWTtO9EqOas5Qh-sRccYVRiJO6wgHoN7/view?usp=sharing). See also [Sec. Train](#train).
-
 ## Usage
 
 ### Code Structure
@@ -106,7 +104,7 @@ python main_nerf.py data/nerf_synthetic/lego/ --workspace exps/lego_ngp -O --bou
 # ckpt: the input student model checkpoint
 # teacher_workspace: teacher model workspace
 # teacher_ckpt: teacher model checkpoint
-# seal_config: the editing config directory used in headless mode. the config file is $seal_config/seal.json. See also [Sec. Dataset](#dataset).
+# seal_config: the editing config directory used in headless mode. the config file is $seal_config/seal.json.
 # eval_interval & eval_count: control eval behavior
 python main_SealNeRF.py data/nerf_synthetic/lego/\
     --workspace exps/lego_ngp_bbox -O --bound 1.0 --scale 0.8 --dt_gamma 0\
@@ -118,11 +116,13 @@ python main_SealNeRF.py data/nerf_synthetic/lego/\
     --eval_interval 100 --eval_count 10
 ```
 
+The `seal_config` files used by examples in the paper can be downloaded from [Google Drive link](https://drive.google.com/file/d/1PWTtO9EqOas5Qh-sRccYVRiJO6wgHoN7/view?usp=sharing). See also [Sec. Train](#train).
+
 The full argument list and descriptions can be found in the corresponding entrance file (`main_*.py`).
 
 To start in GUI mode, use `--gui`.
 
-## Citation
+## BibTeX
 
 ```
 TBD
@@ -130,4 +130,6 @@ TBD
 
 ## Acknowledgement
 
-Please refer to [torch-npg#acknowledgement](https://github.com/ashawkey/torch-ngp#acknowledgement).
+Use this code under the MIT License. No warranties are provided. Keep the laws of your locality in mind!
+
+Please refer to [torch-npg#acknowledgement](https://github.com/ashawkey/torch-ngp#acknowledgement) for the acknowledgment of the original repo.
