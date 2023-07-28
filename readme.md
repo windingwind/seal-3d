@@ -1,6 +1,6 @@
 # Seal-3D: Interactive Pixel-Level Editing for Neural Radiance Fields
 
-![teaser](https://github.com/windingwind/seal-3d/assets/33902321/2200a90e-8717-499a-81d8-6fc0911b8a50)
+![teaser](https://github.com/windingwind/seal-3d/assets/33902321/15e4898e-7658-4e46-8d90-96401340f4b2)
 
 The official implementation of the paper [Seal-3D: Interactive Pixel-Level Editing for Neural Radiance Fields](), the first interactive pixel-level NeRF editing tool.
 
