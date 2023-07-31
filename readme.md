@@ -8,9 +8,9 @@ Accepted by ICCV 2023.
 
 Project Page: https://windingwind.github.io/seal-3d/
 
-ArXiv Link: TBD
+ArXiv Link: https://arxiv.org/abs/2307.15131
 
-ArXiv PDF: TBD
+ArXiv PDF: https://arxiv.org/pdf/2307.15131
 
 GitHub Repo: https://github.com/windingwind/seal-3d
 
@@ -124,8 +124,15 @@ To start in GUI mode, use `--gui`.
 
 ## BibTeX
 
-```
-TBD
+```bibtex
+@misc{wang2023seal3d,
+      title={Seal-3D: Interactive Pixel-Level Editing for Neural Radiance Fields}, 
+      author={Xiangyu Wang and Jingsen Zhu and Qi Ye and Yuchi Huo and Yunlong Ran and Zhihua Zhong and Jiming Chen},
+      year={2023},
+      eprint={2307.15131},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV}
+}
 ```
 
 ## Acknowledgement
