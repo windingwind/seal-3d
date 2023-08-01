@@ -18,7 +18,7 @@ This project is built on [ashawkey/torch-ngp](https://github.com/ashawkey/torch-
 
 ## Installation
 
-To find more details about the development environment setup, please refer to [torch-npg#install](https://github.com/ashawkey/torch-ngp#install).
+To find more details about the development environment setup, please refer to [torch-ngp#install](https://github.com/ashawkey/torch-ngp#install).
 
 ```bash
 git clone --recursive https://github.com/windingwind/seal-3d.git
@@ -61,7 +61,7 @@ pip install . # install to python path (you still need the raymarching/ folder, 
 
 We use the same data format as instant-ngp. Please download and put them under `./data`.
 
-To find more details about the supported dataset, please refer to [torch-npg#usage](https://github.com/ashawkey/torch-ngp#usage).
+To find more details about the supported dataset, please refer to [torch-ngp#usage](https://github.com/ashawkey/torch-ngp#usage).
 
 ## Usage
 
@@ -87,7 +87,7 @@ In `SealNeRF`:
 
 Follow the steps below to apply the editing operation on an existing NeRF model:
 
-1. Train an NGP/TensoRF model following the instructions of [torch-npg#usage](https://github.com/ashawkey/torch-ngp#usage). For example:
+1. Train an NGP/TensoRF model following the instructions of [torch-ngp#usage](https://github.com/ashawkey/torch-ngp#usage). For example:
 
 ```bash
 # NGP backbone, Lego
@@ -139,4 +139,4 @@ To start in GUI mode, use `--gui`.
 
 Use this code under the MIT License. No warranties are provided. Keep the laws of your locality in mind!
 
-Please refer to [torch-npg#acknowledgement](https://github.com/ashawkey/torch-ngp#acknowledgement) for the acknowledgment of the original repo.
+Please refer to [torch-ngp#acknowledgement](https://github.com/ashawkey/torch-ngp#acknowledgement) for the acknowledgment of the original repo.
