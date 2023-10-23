@@ -6,13 +6,10 @@ The official implementation of the paper [Seal-3D: Interactive Pixel-Level Editi
 
 Accepted by ICCV 2023.
 
-Project Page: https://windingwind.github.io/seal-3d/
-
-ArXiv Link: https://arxiv.org/abs/2307.15131
-
-ArXiv PDF: https://arxiv.org/pdf/2307.15131
-
-GitHub Repo: https://github.com/windingwind/seal-3d
+[Project Page](https://windingwind.github.io/seal-3d/) ｜ 
+[Paper](https://openaccess.thecvf.com/content/ICCV2023/html/Wang_Seal-3D_Interactive_Pixel-Level_Editing_for_Neural_Radiance_Fields_ICCV_2023_paper.html) ｜ 
+[ArXiv](https://arxiv.org/abs/2307.15131) ｜ 
+[Code](https://github.com/windingwind/seal-3d)
 
 This project is built on [ashawkey/torch-ngp](https://github.com/ashawkey/torch-ngp)'s NGP and TensoRF implementation.
 
@@ -116,11 +113,13 @@ python main_SealNeRF.py data/nerf_synthetic/lego/\
     --eval_interval 100 --eval_count 10
 ```
 
-The `seal_config` files used by examples in the paper can be downloaded from [Google Drive link](https://drive.google.com/file/d/1PWTtO9EqOas5Qh-sRccYVRiJO6wgHoN7/view?usp=sharing). See also [Sec. Train](#train).
+The `seal_config` files used by examples in the paper can be downloaded from [Google Drive link](https://drive.google.com/file/d/1PWTtO9EqOas5Qh-sRccYVRiJO6wgHoN7/view?usp=sharing). The explanation for the parameters of `seal_config` can be found in the corresponding class of the proxy function in [SealNeRF/seal_utils](SealNeRF/seal_utils.py).
 
 The full argument list and descriptions can be found in the corresponding entrance file (`main_*.py`).
 
 To start in GUI mode, use `--gui`.
+
+> Currently, GUI mode supports *Color*, *Anchor*, *Brush*, and *Texture* editing.
 
 ## BibTeX
 
